@@ -15,3 +15,16 @@ CREATE TABLE IF NOT EXISTS routing.kv (
   k text PRIMARY KEY,
   v text
 );
+
+-- 2-cassandra-lww: LWW por columna
+CREATE TABLE IF NOT EXISTS demo.users (
+  id text PRIMARY KEY,
+  name text,
+  email text
+);
+
+-- 2-cassandra-lww: counters (no son LWW)
+CREATE TABLE IF NOT EXISTS demo.likes (
+  post text PRIMARY KEY,
+  n counter
+);
