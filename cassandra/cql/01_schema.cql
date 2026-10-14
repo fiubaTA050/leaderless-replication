@@ -28,3 +28,9 @@ CREATE TABLE IF NOT EXISTS demo.likes (
   post text PRIMARY KEY,
   n counter
 );
+
+-- 3-cassandra-tombstones: gc_grace_seconds de 60s (default: 10 días) para ver la resurrección en clase
+CREATE TABLE IF NOT EXISTS demo.carts (
+  id text PRIMARY KEY,
+  item text
+) WITH gc_grace_seconds = 60;
