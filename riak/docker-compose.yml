@@ -1,0 +1,22 @@
+services:
+  riak:
+    # Imagen oficial: Riak 2.2.3, solo amd64 (en Apple Silicon corre emulada)
+    image: basho/riak-kv
+    platform: linux/amd64
+    ports:
+      # HTTP API
+      - "8098:8098"
+    healthcheck:
+      # Riak escucha en la IP del container, no en localhost. /ping responde antes de que KV funcione:
+      # esperamos a que un GET de una key que no existe dé 404 (antes da 500, all_nodes_down)
+      test: test "$$(curl -s -o /dev/null -w %{http_code} $$(hostname -i):8098/buckets/health/keys/check)" = 404
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    volumes:
+      - riak-data:/var/lib/riak
+
+# Los volúmenes sobreviven a `docker rm -f` y se borran con `down -v`
+volumes:
+  riak-data:
