@@ -1,0 +1,71 @@
+# Configuración común de los 3 nodos
+x-cassandra: &cassandra
+  image: cassandra:5.0
+  environment: &cassandra-env
+    CASSANDRA_CLUSTER_NAME: leaderless
+    # Los 3 son seeds: arrancan a la vez sin bootstrap (cluster nuevo, sin datos)
+    CASSANDRA_SEEDS: node1,node2,node3
+    CASSANDRA_DC: dc1
+    CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+    # 1 token por nodo, fijo con initial_token (ver cada nodo): si 3 seeds arrancan a la vez y eligen sus tokens
+    # solos, a veces dos eligen los mismos y el ring queda con 2 nodos
+    CASSANDRA_NUM_TOKENS: 1
+    # Heap chico para que entren 3 nodos en una notebook
+    MAX_HEAP_SIZE: 512M
+    HEAP_NEWSIZE: 128M
+  healthcheck:
+    test: cqlsh -e "DESCRIBE KEYSPACES" > /dev/null
+    interval: 5s
+    timeout: 10s
+    retries: 60
+    start_period: 30s
+  # Sin depends_on: cada nodo se mata (docker rm -f / docker pause) y se prende de forma independiente
+
+services:
+  node1:
+    <<: *cassandra
+    environment:
+      <<: *cassandra-env
+      # Posición del nodo en el ring (tokens de Murmur3 repartidos en 3 partes iguales)
+      JVM_EXTRA_OPTS: -Dcassandra.initial_token=-9223372036854775808
+    volumes:
+      - ./cql:/cql:ro
+      - node1-data:/var/lib/cassandra
+
+  node2:
+    <<: *cassandra
+    environment:
+      <<: *cassandra-env
+      # Posición del nodo en el ring (tokens de Murmur3 repartidos en 3 partes iguales)
+      JVM_EXTRA_OPTS: -Dcassandra.initial_token=-3074457345618258603
+    volumes:
+      - ./cql:/cql:ro
+      - node2-data:/var/lib/cassandra
+
+  node3:
+    <<: *cassandra
+    environment:
+      <<: *cassandra-env
+      # Posición del nodo en el ring (tokens de Murmur3 repartidos en 3 partes iguales)
+      JVM_EXTRA_OPTS: -Dcassandra.initial_token=3074457345618258602
+    volumes:
+      - ./cql:/cql:ro
+      - node3-data:/var/lib/cassandra
+
+  # Cliente Node: corre en la misma red que los nodos porque el driver se conecta a las IPs internas que
+  # anuncia cada nodo (no a los ports publicados en el host).
+  # docker compose run --rm client node src/routing.js
+  client:
+    image: node:24-alpine
+    working_dir: /app
+    volumes:
+      - ./:/app:ro
+    user: node
+    profiles:
+      - client
+
+# Los volúmenes sobreviven a `docker rm -f` y se borran con `down -v`
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:

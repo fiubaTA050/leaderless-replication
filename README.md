@@ -1,128 +1,327 @@
 # Replicación leaderless
 
-## Dependencias
+Dependencias y secuencia completa de la clase: [`main`](https://github.com/fiubaTA050/leaderless-replication/tree/main).
 
-- Docker with Compose v2
-- Node.js 24
+## Parte 2: Cassandra
 
-## Secuencia de la clase
+Cluster de 3 nodos (`cassandra/docker-compose.yml`), keyspace `demo` con RF 3: cada nodo tiene una copia de
+todo.
 
-| Parte | Branch | Tema |
+Comandos comunes (desde `cassandra/`):
+
+```bash
+# prender el cluster (~1 min): --wait espera el healthcheck de los 3 nodos
+docker compose up -d --wait
+
+# estado del cluster según gossip: UN = Up Normal, DN = Down Normal
+docker exec cassandra-node1-1 nodetool status
+
+# IP de cada container (nodetool muestra IPs)
+docker network inspect cassandra_default --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}'
+
+# cqlsh contra un nodo (ese nodo es el coordinator)
+docker exec -it cassandra-node1-1 cqlsh
+```
+
+### Branch `1-cassandra-cluster`: coordinator, consistency levels, hints y read repair
+
+```bash
+git checkout 1-cassandra-cluster
+cd cassandra
+npm install
+docker compose up -d --wait
+docker exec cassandra-node1-1 cqlsh -f /cql/01_schema.cql
+```
+
+#### Arquitectura
+
+**Cluster**: los nodos forman un **ring** de tokens. El hash (Murmur3) de la partition key da un token, y cada nodo
+es dueño de uno o más rangos del ring (`num_tokens`: 16 por default). Las réplicas de una key son el dueño de su
+rango y los nodos siguientes en el ring, hasta completar el RF. No hay nodos especiales: todos coordinan y todos son
+réplicas.
+
+En este cluster cada nodo tiene 1 token fijo (`initial_token` en `docker-compose.yml`), repartidos en 3 partes
+iguales. Si los 3 nodos arrancan a la vez y eligen sus tokens solos, a veces dos eligen los mismos, y el ring queda
+con 2 nodos (`nodetool status` muestra 2): los logs dicen "have the same token ... Ignoring".
+
+**Nodo**: cada réplica guarda los datos en un log-structured merge tree:
+
+```mermaid
+flowchart LR
+    write([write]) --> commitlog[("Commitlog<br/>disco, append-only")]
+    write --> memtable["Memtable<br/>memoria, ordenado por clave"]
+    memtable -- flush --> sstables[("SSTables<br/>disco, inmutables")]
+    sstables -- compaction --> sstables
+    read([read]) --> memtable
+    read --> sstables
+```
+
+- **Commitlog**: cada write se agrega al final de un archivo. Solo se usa para reconstruir el memtable si el
+  proceso se reinicia.
+- **Memtable**: el write también va a una tabla en memoria, ordenada por clave, y ahí la réplica responde. No lee
+  nada antes de escribir ni modifica archivos.
+- **Flush**: cuando el memtable se llena (o con `nodetool flush`), se escribe entero como un **SSTable** (Sorted
+  String Table): un archivo ordenado e **inmutable**. Esa parte del commitlog ya no hace falta.
+- **Read**: busca la key en el memtable y en los SSTables (un bloom filter descarta los que seguro no la tienen) y
+  combina celda por celda: gana el timestamp mayor.
+- **Compaction**: en background junta varios SSTables en uno nuevo, se queda con la versión más nueva de cada
+  celda y descarta lo que quedó tapado. Es el único momento en que se elimina algo del disco.
+
+Como los SSTables son inmutables, un `DELETE` no puede borrar el dato: escribe un **tombstone**, una marca de
+borrado con su timestamp que tapa al dato.
+
+**Anti-entropy** (`nodetool repair`): el operador lo corre en un nodo, y para cada rango de tokens de ese nodo:
+
+1. Le pide a cada réplica del rango un **Merkle tree**: la réplica lee todos sus SSTables del rango (validation
+   compaction), calcula un hash por subrango (hojas) y hashes de hashes hasta la raíz.
+2. Compara los árboles de a pares desde la raíz: si dos hashes son iguales, ese subárbol es idéntico y no lo
+   mira más; si difieren, baja hasta las hojas.
+3. Las réplicas se mandan (streaming) los datos de las hojas que difieren, en las dos direcciones.
+4. Cada réplica agrega lo recibido como SSTables nuevos. No hay que elegir un ganador: el read y la compaction
+   resuelven por LWW, como con cualquier write.
+5. Con incremental repair (default sin `-full`), marca los SSTables como reparados para no volver a validarlos.
+
+#### 1. Cualquier nodo coordina
+
+No hay leader: el nodo que recibe la query es el **coordinator** de esa query. Calcula el token de la partition
+key, manda el write a todas las réplicas y responde cuando confirmaron tantas como pide el consistency level.
+
+```bash
+docker exec cassandra-node1-1 cqlsh -e "CONSISTENCY QUORUM; INSERT INTO demo.kv (k, v) VALUES ('a', 'escrito desde node1');"
+docker exec cassandra-node3-1 cqlsh -e "CONSISTENCY QUORUM; SELECT * FROM demo.kv WHERE k = 'a';"
+```
+
+Réplicas de una key (con RF 3 son los 3 nodos):
+
+```bash
+docker exec cassandra-node1-1 nodetool getendpoints demo kv a
+```
+
+Consistency levels más usados (con RF 3):
+
+| CL | Réplicas que tienen que responder |
+| --- | --- |
+| `ONE` | 1 |
+| `QUORUM` | 2 (`RF / 2 + 1`) |
+| `ALL` | 3 |
+| `ANY` | 1, o un hint en el coordinator (solo writes) |
+
+Con `QUORUM` en reads y writes, `R + W > N`.
+
+#### 2. Token-aware routing
+
+Si el coordinator no es réplica, reenvía la query: un salto de red más. El driver conoce el ring (tokens de cada
+nodo) y manda cada query directamente a una réplica. El keyspace `routing` tiene RF 1 para que se vea: cada key
+vive en un solo nodo.
+
+```bash
+docker compose run --rm client node src/routing.js
+```
+
+Con la policy default (token-aware) `coordinator` siempre es la réplica. Con round robin, no.
+
+#### 3. Timeout ≠ rollback
+
+El consistency level **no** hace atómico al write: decide cuándo se responde al cliente, no si el write se
+aplica. Las réplicas que lo recibieron lo aplican aunque no se llegue al consistency level, y no hay rollback.
+
+`docker pause` congela node2 y node3: el proceso no responde pero gossip todavía no lo detectó (los ve `UN`).
+En la misma línea, antes de que gossip los marque como caídos:
+
+```bash
+docker pause cassandra-node2-1 cassandra-node3-1 && docker exec cassandra-node1-1 cqlsh -e "CONSISTENCY QUORUM; INSERT INTO demo.kv (k, v) VALUES ('b', 'write con timeout');"
+```
+
+`WriteTimeout: ... received only 1 responses`: el cliente recibe un error. Pero node1 lo aplicó (lo leemos en el
+paso 4: mientras gossip vea a node2 y node3 vivos, un read con `ONE` en node1 puede ir a una réplica congelada y dar
+`ReadTimeout`).
+
+Además node1 guardó un **hint** para node2 y node3: cuando vuelvan, se los manda. El write "fallido" se va a
+propagar a todas las réplicas. Para el cliente, un timeout significa "no sé": puede estar en 0, 1 o 3 réplicas.
+
+¿Qué promete Cassandra?
+
+- Si el write responde OK con CL `X`, está en al menos `X` réplicas (en el commitlog de cada una, que no
+  necesariamente llegó al disco: ver abajo).
+- Si responde error, no promete nada: puede quedar aplicado en algunas réplicas y propagarse después.
+- Retry: el cliente puede reintentar, y el write tiene que ser idempotente (mismo valor y mismo
+  timestamp).
+
+¿Qué pasa si una réplica muere antes de escribir en disco? Cada réplica agrega el write al **commitlog** y al
+**memtable**, y responde. Con el default (`commitlog_sync: periodic`, `commitlog_sync_period: 10000ms`) responde
+**antes** del fsync:
+
+- Si muere solo el proceso (crash, OOM, `kill -9`): el commitlog ya está en el page cache del sistema operativo,
+  que lo escribe igual. Al reiniciar, Cassandra hace replay del commitlog y reconstruye el memtable. No se pierde
+  nada.
+- Si muere la máquina (corte de luz, kernel panic): esa réplica puede perder hasta ~10s de writes que ya
+  confirmó.
+
+En el cluster:
+
+- Con `QUORUM` (RF 3) el write está en 2 réplicas. Si una lo pierde, queda atrasada hasta un read repair o un
+  `nodetool repair` (no hay hint: había respondido OK). Para perderlo se tienen que caer 2 máquinas en la misma
+  ventana; por eso las réplicas van en racks o zonas distintas.
+- Con `ONE`, si la única réplica que lo tenía se apaga antes del fsync y las otras no lo recibieron (caídas o con
+  timeout), el write se pierde aunque respondió OK: el ACK durable de `main`.
+- `commitlog_sync: batch` (o `group`) hace fsync antes de responder: más durable en cada nodo, más latencia. En
+  general es más barato subir el CL: la durabilidad viene de tener copias en máquinas independientes.
+
+`docker rm -f` y `docker pause` solo matan o congelan el proceso (el page cache de la VM de Docker sigue), así que
+en estas demos no se pierden writes confirmados.
+
+¿Cuándo el coordinator considera que una réplica falló?
+
+- **Down según gossip** (antes de mandar): si no hay suficientes réplicas vivas para el CL, responde
+  `Unavailable` y no escribe nada (paso 4).
+- **Timeout**: la réplica no responde en `write_request_timeout` (2s).
+- **Dropped mutations**: la réplica está sobrecargada y descarta el write que esperó demasiado en la cola
+  (`nodetool tpstats`, sección "Dropped"). Para el coordinator es un timeout.
+
+¿El coordinator reintenta? Solo con **hinted handoff**: guarda el write en un archivo local y lo reenvía cuando
+gossip ve a la réplica viva otra vez. Límites:
+
+- Solo para réplicas caídas menos de `max_hint_window` (3 horas por default). Después deja de guardar hints.
+- Los hints están en el disco del coordinator: si el coordinator muere y no vuelve, se pierden.
+- Un hint **no cuenta** para el consistency level (quorum estricto, no sloppy quorum como Dynamo). Excepción:
+  `ANY`, donde alcanza con el hint (el dato no se puede leer hasta que se entregue).
+
+#### 4. Unavailable: gossip ya sabe que están caídos
+
+Repetir hasta ver `DN` en node2 y node3 (~10-20s):
+
+```bash
+docker exec cassandra-node1-1 nodetool status
+```
+
+```bash
+docker exec cassandra-node1-1 cqlsh -e "CONSISTENCY QUORUM; INSERT INTO demo.kv (k, v) VALUES ('c', 'unavailable');"
+docker exec cassandra-node1-1 cqlsh -e "CONSISTENCY ONE; SELECT * FROM demo.kv WHERE k IN ('b', 'c');"
+```
+
+`Unavailable ... alive_replicas: 1`: no escribió nada, falla antes de intentar (`c` no está). En cambio `b`, el
+write con timeout del paso 3, está en node1 (ahora node1 es la única réplica viva, así que el read es local). Con
+`ONE` sí escribe y guarda hints:
+
+```bash
+docker exec cassandra-node1-1 cqlsh -e "CONSISTENCY ONE; INSERT INTO demo.kv (k, v) VALUES ('d', 'con ONE');"
+docker exec cassandra-node1-1 nodetool listpendinghints
+```
+
+```bash
+docker unpause cassandra-node2-1 cassandra-node3-1
+```
+
+node1 entrega los hints entre 10 y 30 segundos después (los revisa periódicamente, no en el momento en que el
+nodo vuelve). Repetir hasta ver dos líneas `Finished hinted handoff ... to endpoint`, una por la IP de node2 y otra
+por la de node3:
+
+```bash
+docker logs cassandra-node1-1 2>&1 | grep "Finished hinted handoff"
+```
+
+Un `SELECT` con `ONE` en node2 no sirve para comprobarlo: el coordinator no siempre se lee a sí mismo (elige la
+réplica que viene respondiendo más rápido), y node1 ya tiene `b` y `d`.
+
+#### 5. Read repair
+
+Read repair: cuando un read consulta varias réplicas y las respuestas difieren, el coordinator devuelve el valor
+más nuevo y se lo escribe a las réplicas atrasadas.
+
+Sin hints en node1, node3 se pierde un write:
+
+```bash
+docker exec cassandra-node1-1 nodetool disablehandoff
+docker pause cassandra-node3-1
+```
+
+Esperar `DN` en node3 (`nodetool status`), y escribir:
+
+```bash
+docker exec cassandra-node1-1 cqlsh -e "CONSISTENCY QUORUM; INSERT INTO demo.kv (k, v) VALUES ('e', 'node3 no lo tiene');"
+docker unpause cassandra-node3-1
+```
+
+Read con `ALL` (consulta a las 3 réplicas, así que seguro incluye a node3):
+
+```bash
+docker exec cassandra-node3-1 cqlsh -e "CONSISTENCY ALL; TRACING ON; SELECT * FROM demo.kv WHERE k = 'e';" | grep -iE ' e \||digest|repair'
+```
+
+El trace muestra `Digest mismatch` (las réplicas difieren) y `Sending read-repair-mutation to Full(/IP de node3...)`
+(le escribe el valor a node3). El mismo read otra vez ya no muestra `Digest mismatch`: las 3 réplicas coinciden.
+
+```bash
+docker exec cassandra-node3-1 cqlsh -e "CONSISTENCY ALL; TRACING ON; SELECT * FROM demo.kv WHERE k = 'e';" | grep -iE ' e \||digest|repair'
+docker exec cassandra-node1-1 nodetool enablehandoff
+```
+
+En Cassandra (desde 4.0) el read repair es **blocking** y solo entre las réplicas que consultó el read. Con
+`QUORUM` el coordinator elige 2 réplicas (no necesariamente él mismo): si elige las 2 que ya tenían el dato, node3
+sigue atrasada. Con `ONE` no hay read repair. Por lo mismo, un read con `ONE` en node3 no sirve para ver qué tiene
+node3: puede responderlo otra réplica.
+
+```bash
+docker compose down -v
+cd ..
+```
+
+#### Gossip y anti-entropy
+
+**Gossip** propaga solo membership y estado del cluster, **no datos**: cada segundo cada nodo intercambia con 1 a
+3 nodos qué nodos conoce, sus tokens, versión del schema, carga y un heartbeat. Un failure detector **phi
+accrual** calcula, según el intervalo entre heartbeats, qué tan probable es que un nodo esté caído; cuando
+supera `phi_convict_threshold` lo marca `DN` (los ~10-20s del paso 4). Los datos van del coordinator a las
+réplicas directamente.
+
+**Anti-entropy** es `nodetool repair` (pasos en [Arquitectura](#arquitectura)). No es automático (en
+Cassandra 5): lo programa el operador (cron, Cassandra Reaper), y tiene que correr al menos cada
+`gc_grace_seconds`: cuánto tiempo se guardan los tombstones de los deletes, default 10 días.
+
+¿Cuándo un valor puede quedar viejo indefinidamente en una réplica?
+
+- La réplica estuvo caída más que `max_hint_window`, o el coordinator murió con los hints, o los hints estaban
+  deshabilitados.
+- El dato no se vuelve a leer, o se lee con `ONE`, o con `QUORUM` sin consultar a esa réplica (no hay read
+  repair).
+- Nadie corre `nodetool repair`.
+
+#### ¿Cuánto tarda `nodetool repair`?
+
+Un **full repair** (`nodetool repair -full`) es proporcional a **todos los datos** de cada nodo, no a lo que
+difiere: cada réplica tiene que leer todo su rango para armar el Merkle tree (validation compaction). Después
+solo transfiere los rangos distintos, pero cada hoja del árbol cubre muchas particiones: una partición distinta
+hace transferir la hoja completa (overstreaming), peor cuanto más datos por nodo.
+
+La lectura está limitada por `compaction_throughput` (default 64 MiB/s) y compite con las compactions normales y
+con el tráfico de la aplicación. Orden de magnitud para un ciclo completo con `-pr` (cada nodo repara su rango
+primario, de a un nodo por vez), con `N` nodos, `D` datos por nodo y RF 3: `N × D / (3 × 64 MiB/s)`.
+
+| Nodos | Datos por nodo | Ciclo de full repair |
 | --- | --- | --- |
-| 1. Bases de datos leaderless | [`main`](https://github.com/fiubaTA050/leaderless-replication/tree/main) | pros, contras, invariantes, coordination avoidance |
-| 2. Cassandra | [`1-cassandra-cluster`](https://github.com/fiubaTA050/leaderless-replication/tree/1-cassandra-cluster) | coordinator, consistency levels, timeout ≠ rollback, hints, read repair |
-|  | [`2-cassandra-lww`](https://github.com/fiubaTA050/leaderless-replication/tree/2-cassandra-lww) | timestamps, LWW por columna, counters |
-|  | [`3-cassandra-tombstones`](https://github.com/fiubaTA050/leaderless-replication/tree/3-cassandra-tombstones) | tombstones, `gc_grace_seconds`, resurrección |
-| 3. Riak | [`4-riak-siblings`](https://github.com/fiubaTA050/leaderless-replication/tree/4-riak-siblings) | siblings y dotted version vectors |
-| 4. CRDTs | [`5-crdt-lww`](https://github.com/fiubaTA050/leaderless-replication/tree/5-crdt-lww) | join-semilattice, LWW-Register |
-|  | [`6-crdt-counters`](https://github.com/fiubaTA050/leaderless-replication/tree/6-crdt-counters) | law testing, G-Counter, PN-Counter |
-|  | [`7-crdt-sets`](https://github.com/fiubaTA050/leaderless-replication/tree/7-crdt-sets) | G-Set, 2P-Set, OR-Set, Remove-wins set, LWW-Register causal |
+| 6 | 500 GB | ~4 horas |
+| 12 | 2 TB | ~1,5 días |
+| 60 | 4 TB | ~14 días: más que `gc_grace_seconds` |
 
-Cada branch agrega su sección a este README.
+Es un mínimo: en la práctica es más lento, y si un nodo se cae durante el repair, las sesiones de sus rangos
+fallan y hay que repetirlas.
 
-## Parte 1: bases de datos leaderless
+¿Cuándo es imposible correrlo una vez cada `gc_grace_seconds`? Cuando el ciclo completo (con reintentos y sin
+saturar el cluster) tarda más que `gc_grace_seconds`: muchos nodos con varios TB cada uno, o un cluster que no
+tiene capacidad libre para leer todo sin afectar la latencia. También si un nodo está caído más de
+`gc_grace_seconds`: no se puede reparar, hay que reemplazarlo.
 
-Ya vimos Dynamo: no hay leader, el cliente (o un coordinator) escribe en `N` réplicas y los conflictos se los
-devuelve al cliente. Ejemplos de la misma familia: Cassandra, Riak, ScyllaDB, Voldemort (DynamoDB, a pesar del
-nombre, usa un leader por partición).
+Qué se hace:
 
-Parámetros de Dynamo que vamos a usar todo el tiempo:
+- **Incremental repair** (default de `nodetool repair` sin `-full`): marca los SSTables reparados y solo valida
+  los nuevos, así que cuesta proporcional a lo escrito desde el último repair, no al total. Igual se corre un full
+  repair cada tanto.
+- **Subrange repair** (Cassandra Reaper): divide el ring en segmentos chicos que se pueden pausar, reintentar y
+  correr en paralelo sobre réplicas distintas.
+- **Nodos más chicos** (más nodos con menos datos): el límite de datos por nodo es en gran parte por repair y
+  streaming.
+- **Subir `gc_grace_seconds`**: da más tiempo, pero los tombstones duran más (reads más lentos, más disco).
+- **Evitar deletes**: datos con TTL que expiran juntos (`TimeWindowCompactionStrategy` elimina SSTables completos)
+  o tablas append-only.
 
-- `N`: cantidad de réplicas de cada key.
-- `W`: réplicas que tienen que confirmar un write para responder OK.
-- `R`: réplicas que se consultan en un read.
-- `R + W > N`: los conjuntos de réplicas del read y del write se intersectan (quorum estricto), así que el read
-  ve al menos una réplica con el último write confirmado. No alcanza para tener linearizability.
-
-### Beneficios
-
-- **Menor latencia**: el cliente escribe en las réplicas más cercanas y responde con las primeras `W` que
-  confirman. No hay un salto extra hasta un leader que puede estar lejos, y una réplica lenta no frena el write:
-  la latencia es la de la `W`-ésima réplica más rápida, no la de una réplica en particular.
-- **Más disponibilidad que la replicación con leader**: cualquier réplica acepta reads y writes. Si un nodo
-  muere, los demás siguen atendiendo: no hay failover, ni una ventana sin writes mientras se elige otro leader, ni
-  riesgo de dos leaders a la vez (split brain).
-- **Replicación entre regiones lejanas**: con un leader y replicación sincrónica (la clase anterior), cada write
-  espera el round trip a la otra región, de decenas a cientos de ms. Sin leader, cada región confirma con sus
-  réplicas locales y replica a las otras en background, y todas las regiones aceptan writes a la vez.
-- **Tolerancia a particiones**: si la red se parte, cada lado puede seguir aceptando writes (con un `W` chico) y
-  las réplicas se ponen de acuerdo cuando la red vuelve. Disponibilidad antes que consistencia (AP en CAP).
-- **Sin cuello de botella en un leader**: los writes se reparten entre todos los nodos (consistent hashing);
-  ningún nodo recibe todos los writes.
-- **Write a cualquier nodo inmediatamente**: el cliente no necesita saber quién es el leader ni ser redirigido.
-- **Latencia y consistencia ajustables por request**: el cliente elige `R` y `W` en cada operación. Un write con
-  `W = 1` es rápido pero frágil; uno con `W = N` es lento y falla si una réplica no responde.
-
-### Contras
-
-- **Eventual consistency**: las réplicas pueden diferir durante un tiempo (a veces, indefinidamente).
-- **Conflictos**: dos writes concurrentes a la misma key, aceptados por réplicas distintas. Alguien tiene que
-  resolverlos: la base (ej: last write wins, que pierde datos) o el cliente (la base le devuelve todas las versiones
-  concurrentes).
-- **Stale reads**: con `R + W ≤ N`, o mientras una réplica está atrasada, un read puede devolver un valor viejo.
-- **Lost updates**: dos clientes hacen read-modify-write sobre el mismo valor y uno pisa al otro.
-- **Complejidad operativa**: hints, read repair y anti-entropy (`nodetool repair`) son responsabilidad del
-  operador. Si no se hacen, las réplicas divergen o aparecen datos borrados.
-
-### Invariantes que no se pueden garantizar sin coordinación
-
-Dos réplicas aceptan writes de forma independiente y después se combinan. Si cada una por separado respeta el
-invariante pero la combinación no, el invariante necesita coordinación (un leader, un lock, consenso).
-
-| Invariante | Ejemplo | Qué pasa sin coordinación |
-| --- | --- | --- |
-| Uniqueness | username único | dos réplicas aceptan el mismo `username` para dos usuarios distintos |
-| Valores acotados | `stock ≥ 0` | stock 1: dos réplicas venden 1 cada una, al combinar queda `-1` |
-| Read-modify-write | `saldo = saldo + 10` | dos clientes leen 100 y escriben 110: se pierde un depósito |
-| Integridad referencial | toda compra referencia un producto existente | una réplica borra el producto, otra inserta una compra |
-| Write skew | al menos un médico de guardia | dos médicos se dan de baja en réplicas distintas, cada una ve al otro de guardia |
-| Secuencias | números de factura consecutivos | dos réplicas asignan el mismo número, o quedan huecos |
-| ACK durable | "OK = el dato no se pierde" | con `W = 1`, la única réplica que lo tiene muere antes de replicar |
-| Delete durable | un delete es para siempre | una réplica que no recibió el delete hace "resucitar" el dato |
-| Session guarantees | read-your-writes, monotonic reads | el cliente escribe en una réplica y lee de otra que todavía no lo tiene |
-
-El cliente tiene que trabajar dentro de estos límites. Ejemplos:
-
-- En vez de read-modify-write, operaciones que conmutan: counters de Cassandra (`n = n + 1`), donde dos
-  incrementos concurrentes suman los dos.
-- Resolución de conflictos propia: la base guarda las versiones concurrentes y el cliente las combina con reglas de
-  la aplicación.
-- IDs generados sin coordinar (UUID, `timeuuid`) en vez de secuencias.
-- Para lo que sí necesita coordinación, pagarla solo ahí: lightweight transactions de Cassandra (`IF NOT EXISTS`,
-  Paxos), o mover esa parte a una base con leader.
-- Aceptar la violación y compensar después (ej: vender de más y cancelar una compra).
-
-### Coordination avoidance (Bailis et al., VLDB 2014)
-
-Paper: "Coordination Avoidance in Database Systems". Pregunta: ¿cuándo una aplicación puede mantener sus
-invariantes sin coordinación entre réplicas?
-
-**Invariant confluence (I-confluence)**: un invariante `I` es I-confluent para un conjunto de transactions si,
-partiendo de un estado válido, dos réplicas que ejecutan transactions por separado (cada una quedando en un
-estado válido) siempre se pueden combinar (merge) en un estado que también es válido.
-
-- Si es I-confluent: se puede mantener sin coordinación (disponible, escala, baja latencia).
-- Si no lo es: cualquier implementación necesita coordinación para alguna ejecución.
-
-Depende del invariante **y** de la operación:
-
-| Invariante | Operación | ¿Sin coordinación? |
-| --- | --- | --- |
-| `NOT NULL`, `campo = constante` | cualquiera | sí |
-| ID único generado por el sistema (UUID) | insert | sí |
-| ID único elegido por el usuario (`PRIMARY KEY`, `UNIQUE`) | insert | no |
-| `AUTO_INCREMENT` sin huecos | insert | no |
-| Foreign key | insert | sí |
-| Foreign key | delete (sin cascade) | no |
-| Foreign key | cascading delete | sí |
-| `x > 0` | increment | sí |
-| `x > 0` | decrement | no |
-| Índices secundarios, materialized views | cualquiera | sí |
-
-Ejemplo `stock ≥ 0`: reponer stock (increment) nunca lo rompe, sin importar cuántas réplicas lo hagan a la vez.
-Vender (decrement) sí: cada réplica ve stock suficiente, pero la suma de las ventas no.
-
-Conclusión del paper: en benchmarks reales (TPC-C) la mayoría de los invariantes son I-confluent, así que solo
-una parte chica de las operaciones necesita coordinación.
-
-**Siguiente:** [`1-cassandra-cluster`](https://github.com/fiubaTA050/leaderless-replication/tree/1-cassandra-cluster)
+**Siguiente:** [`2-cassandra-lww`](https://github.com/fiubaTA050/leaderless-replication/tree/2-cassandra-lww)

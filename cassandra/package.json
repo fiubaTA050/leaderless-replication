@@ -1,0 +1,13 @@
+{
+  "name": "cassandra-demos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Demos de Cassandra con cassandra-driver.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "cassandra-driver": "^4.10.0"
+  }
+}
