@@ -4,134 +4,72 @@ Dependencias y secuencia completa de la clase: [`main`](https://github.com/fiuba
 
 ## Parte 4: CRDTs
 
-Conflict-free Replicated Data Types: tipos de datos cuyas réplicas aceptan updates sin coordinación y siempre
-convergen, sin conflictos que resolver.
-
-Beneficio principal: cada réplica aplica sus updates localmente, sin hablar con ningún otro nodo en cada operación.
-Una réplica puede ser un servidor, pero también un celular o un browser: sigue funcionando offline o con la red
-partida, cada operación tiene la latencia de un cambio local, y los cambios se sincronizan cuando hay conexión
-(local-first).
-
-Dos familias:
-
-- **State-based** (CvRDT): las réplicas se mandan el estado completo y lo combinan con `join`.
-- **Operation-based** (CmRDT): las réplicas se mandan operaciones; necesitan entrega causal y exactly-once.
-
-Vemos solo state-based (sin delta-state). Código en `crdt/`: TypeScript, tests con vitest y fast-check.
-
-### Branch `5-crdt-lww`: join-semilattice y LWW-Register
+### Branch `6-crdt-counters`: law testing y counters
 
 ```bash
-git checkout 5-crdt-lww
+git checkout 6-crdt-counters
 cd crdt
 npm install
 npm test
 ```
 
-#### Join-semilattice
+#### Law testing
 
-Un **orden parcial** `≤` es reflexivo, antisimétrico y transitivo, pero no todo par es comparable. Ejemplo: los
-subconjuntos de `{a,b,c}` ordenados por `⊆`; `{a}` y `{b}` no son comparables. El diagrama de Hasse muestra ese
-orden:
+En `5-crdt-lww` escribimos cada propiedad a mano. Esas propiedades son las **leyes** del join, y son las mismas
+para todo CRDT, así que `test/commons/laws.ts` las agrupa en `testCrdtLaws(name, Clase, params, apply)`: join
+conmutativo, asociativo e idempotente, y `Clase.bottom` neutro del join. Sirve para cualquier clase que implemente
+`Crdt` y tenga un `static bottom`. Los estados de prueba los arma `testCrdtLaws`: genera una lista de `params` al
+azar y los aplica en orden desde `Clase.bottom` con `apply`.
 
-![Diagrama de Hasse de los subconjuntos de {a,b,c} ordenados por inclusión](img/hasse.svg)
+Las leyes comparan estados con `equals`, no con `value()`: `{a → 2}` y `{b → 2}` tienen el mismo valor pero son
+estados distintos, y lo que tiene que converger es el estado (es lo que las réplicas se mandan y combinan después).
 
-Cómo se lee:
+#### G-Counter
 
-- Cada línea une un elemento con otro que está justo arriba en el orden, sin ninguno en el medio: `{a}` con
-  `{a,b}`, pero no `{a}` con `{a,b,c}`.
-- `x ≤ y` si se puede llegar de `x` a `y` subiendo por líneas: `{a} ≤ {a,b,c}` (pasando por `{a,b}` o `{a,c}`).
-- Si no hay camino subiendo de uno al otro, no son comparables: `{a}` y `{b}`.
-- El join de dos elementos es el primero al que se llega subiendo desde los dos: `{a} ⊔ {b} = {a,b}`.
+Un LWW-Register no sirve para contar: dos réplicas leen 0 y escriben 1 a la vez, y el join da 1, no 2.
 
-El **least upper bound** (join, `⊔`) de `x` e `y` es el menor elemento que es `≥` que los dos. Acá es la unión:
-`{a} ⊔ {b} = {a,b}`, `{a,b} ⊔ {b,c} = {a,b,c}`. Un **join-semilattice** es un orden parcial donde todo par tiene
-join. Abajo de todo está **bottom** (`{}`): el estado inicial, antes de cualquier update.
+`src/gcounter.ts`: un `Map` con una entrada por réplica (`a → 2, b → 3`). Cada réplica solo incrementa su propia
+entrada (`increment(replicaId, amount)`), así que el máximo de cada entrada es el valor correcto. Valor: la suma de
+las entradas. Orden: componente a componente. Join: máximo por réplica.
 
-Un join-semilattice queda completamente definido por:
-
-| Componente | Qué es | En el ejemplo |
-| --- | --- | --- |
-| Dominio `S` | el conjunto de todos los valores (estados) posibles | los subconjuntos de `{a,b,c}` |
-| Join `⊔ : S × S → S` | combina dos valores en otro de `S`; tiene que ser conmutativo, asociativo e idempotente | unión |
-| Orden `≤` | sale del join: `a ≤ b` si `a ⊔ b = b` ("`b` ya incluye a `a`") | `⊆` |
-| Bottom `⊥` (opcional) | el menor de todos: `⊥ ⊔ a = a` para todo `a` | `{}` |
-
-Con el dominio y el join alcanza: el orden se deduce del join (y al revés: dado el orden, el join es el least
-upper bound). Bottom no es obligatorio para ser un semilattice, pero un CRDT lo necesita como estado inicial de
-cada réplica.
-
-| Propiedad del join | Qué permite |
-| --- | --- |
-| Conmutativo: `a ⊔ b = b ⊔ a` | los estados pueden llegar en cualquier orden |
-| Asociativo: `(a ⊔ b) ⊔ c = a ⊔ (b ⊔ c)` | da igual si llegan directo o a través de otra réplica |
-| Idempotente: `a ⊔ a = a` | los duplicados no cambian nada (alcanza con at-least-once) |
-
-Además:
-
-- **Updates inflationary**: cada update solo sube en el orden (`s ≤ update(s)`). Un join nunca deshace un update.
-- **Eventual delivery**: es un supuesto, no una garantía. El sistema tiene que hacer llegar cada estado a las demás
-  réplicas (gossip, anti-entropy, reintentos…). Si una réplica nunca lo recibe (nunca se reconecta, o el estado se
-  perdió), no converge: un CRDT no puede arreglar eso.
-
-Con todo eso hay **strong eventual consistency**: dos réplicas que recibieron los mismos updates (en cualquier
-orden, con duplicados) están en el mismo estado. Sigue siendo eventual: un update tarda en llegar a todas las
-réplicas, y mientras tanto pueden diferir. Lo "strong" es que no hace falta nada más para converger (resolver
-conflictos, elegir un ganador, hacer rollback): alcanza con que les lleguen los mismos updates.
-
-Ejemplos de dominios con una operación que es un join:
-
-| Dominio | Join | Ejemplo de uso |
-| --- | --- | --- |
-| Números | `max` | el precio más alto ofrecido en una subasta |
-| Booleans | `or` | un flag que solo se prende ("aceptó los términos") |
-| Conjuntos | unión | tags que solo se agregan |
-| Estados que solo avanzan (`creado < pagado < enviado < entregado`) | el más avanzado | estado de un envío |
-
-Operaciones que **no** sirven como join:
-
-- Suma: `a + a ≠ a` (no es idempotente). Si un estado llega dos veces, se cuenta dos veces.
-- Resta: `a - b ≠ b - a` (no es conmutativa).
-- Promedio: `avg(avg(a, b), c) ≠ avg(a, avg(b, c))` (no es asociativo).
-
-Comparación con lo que vimos:
-
-- LWW de Cassandra también es un join-semilattice (orden por timestamp), pero el orden descarta writes
-  concurrentes.
-- Los siblings de Riak también son un join-semilattice: el estado son los valores concurrentes, cada uno con su dot,
-  y el join entre réplicas se queda con los que ningún write posterior reemplazó (es un CRDT llamado
-  Multi-Value Register). Lo que queda a cargo de la aplicación es combinar los siblings en un solo valor, y esa
-  combinación no tiene por qué ser un join (la unión del carrito resucita items borrados).
-- Al diseñar un CRDT se eligen el estado y el join (y con eso, el orden) para que el join conserve lo que importa
-  de cada update, en vez de descartar uno de los writes concurrentes como hace LWW.
-
-#### LWW-Register
-
-En `crdt/src` implementamos un LWW-Register (`src/lwwregister.ts`).
-
-Cada CRDT es una clase que implementa la interfaz `Crdt` de `src/crdt.ts`: `join` y `value`, lo que ve la
-aplicación. Bottom es un atributo `static bottom` de cada clase (una interface no puede declarar miembros static).
+El join usa `joinMaps(a, b, joinValues)` de `src/commons/maps.ts`: el resultado tiene las claves de los dos maps, y si
+una clave está en los dos, combina los valores con `joinValues`. El G-Counter lo usa con `Math.max`:
 
 ```ts
-export interface Crdt<T, V> {
-  join(crdt: T): T;
-  value(): V;
-  // Solo para los tests: compara el estado completo, no solo value()
-  equals(crdt: T): boolean;
+join(crdt: GCounter): GCounter {
+  return new GCounter(joinMaps(this.counts, crdt.counts, Math.max));
 }
 ```
 
-Los estados no se modifican: cada update es un método que devuelve un estado nuevo. Por eso todas las réplicas
-comparten la misma instancia de `bottom`. En `LWWRegister`, el update es `set(value, timestamp)`:
-
 ```ts
-const a = LWWRegister.bottom.set('Ana', 1001);
-const b = LWWRegister.bottom.set('Beto', 1000);
-a.join(b).value(); // 'Ana'
+const a = GCounter.bottom.increment('a', 2);
+const b = GCounter.bottom.increment('b', 3);
+a.join(b).value(); // 5
 ```
 
-El valor puede ser de cualquier tipo. Con timestamps iguales, gana el valor con el `JSON.stringify` mayor: es un
-desempate arbitrario, pero todas las réplicas eligen el mismo, así que el join sigue siendo conmutativo. Bottom
-tiene timestamp `-Infinity`: cualquier write le gana, así que el join no necesita un caso especial para bottom.
+#### PN-Counter
 
-**Siguiente:** [`6-crdt-counters`](https://github.com/fiubaTA050/leaderless-replication/tree/6-crdt-counters)
+`src/pncounter.ts`: dos G-Counters, `positive` (incrementos) y `negative` (decrementos). Valor:
+`positive - negative`. `decrement` es incrementar `negative`, así que el estado sigue creciendo y el join es el de
+cada G-Counter.
+
+El valor puede quedar negativo (test `stock >= 0`): dos réplicas venden la última unidad a la vez. Es el
+invariante no I-confluent de `main`. Los counters de Cassandra son parecidos (una parte del counter por nodo).
+
+#### Limitación: replica ids sin límite
+
+El estado tiene una entrada por cada réplica que alguna vez escribió. Si cada cliente (browser, celular) es una
+réplica, el estado crece para siempre. Y una entrada de una réplica retirada no se puede borrar sin coordinación:
+si una réplica la borra y otra todavía la tiene, el join la vuelve a traer; si todas la borran, se pierden sus
+incrementos.
+
+Soluciones:
+
+- Solo los nodos del servidor son réplicas (pocos ids, estables); los clientes le mandan incrementos a un nodo.
+  Es lo que hace Cassandra.
+- Garbage collection coordinado, o epochs: con consenso, se suman las entradas retiradas a un valor base y se
+  empieza una epoch nueva.
+- Handoff counters (Almeida y Baquero): los clientes le pasan su cuenta a un servidor con un protocolo de
+  handoff, y después su entrada se puede descartar.
+
+**Siguiente:** [`7-crdt-sets`](https://github.com/fiubaTA050/leaderless-replication/tree/7-crdt-sets)
