@@ -4,72 +4,157 @@ Dependencias y secuencia completa de la clase: [`main`](https://github.com/fiuba
 
 ## Parte 4: CRDTs
 
-### Branch `6-crdt-counters`: law testing y counters
+### Branch `7-crdt-sets`: sets
 
 ```bash
-git checkout 6-crdt-counters
+git checkout 7-crdt-sets
 cd crdt
 npm install
 npm test
 ```
 
-#### Law testing
+Todos pasan `testCrdtLaws`. Lo que cambia entre ellos es la semántica cuando un add y
+un remove del mismo elemento son concurrentes, y eso las leyes no lo ven: el OR-Set y el Remove-wins set cumplen las
+mismas leyes y dan respuestas opuestas. Por eso cada archivo de `test/` tiene, después de las leyes, tests comunes
+de la semántica.
 
-En `5-crdt-lww` escribimos cada propiedad a mano. Esas propiedades son las **leyes** del join, y son las mismas
-para todo CRDT, así que `test/commons/laws.ts` las agrupa en `testCrdtLaws(name, Clase, params, apply)`: join
-conmutativo, asociativo e idempotente, y `Clase.bottom` neutro del join. Sirve para cualquier clase que implemente
-`Crdt` y tenga un `static bottom`. Los estados de prueba los arma `testCrdtLaws`: genera una lista de `params` al
-azar y los aplica en orden desde `Clase.bottom` con `apply`.
+| CRDT | Archivo | Updates | Add y remove concurrentes | ¿Se puede volver a agregar? |
+| --- | --- | --- | --- | --- |
+| G-Set | `src/gset.ts` | `add(e)` | no hay remove | - |
+| 2P-Set | `src/twopset.ts` | `add(e)`, `remove(e)` | gana remove | no |
+| OR-Set | `src/orset.ts` | `add(e, replicaId)`, `remove(e)` | gana add | sí |
+| Remove-wins set | `src/rwset.ts` | `add(e, replicaId)`, `remove(e, replicaId)` | gana remove | sí |
 
-Las leyes comparan estados con `equals`, no con `value()`: `{a → 2}` y `{b → 2}` tienen el mismo valor pero son
-estados distintos, y lo que tiene que converger es el estado (es lo que las réplicas se mandan y combinan después).
+Todos son clases que implementan `Crdt` (`join`, `value` y `equals`) con un `static bottom`; `value()` devuelve el
+`Set` de elementos presentes.
 
-#### G-Counter
+#### G-Set
 
-Un LWW-Register no sirve para contar: dos réplicas leen 0 y escriben 1 a la vez, y el join da 1, no 2.
+Solo agrega. Orden `⊆`, join: unión (el semilattice del diagrama de `5-crdt-lww`).
 
-`src/gcounter.ts`: un `Map` con una entrada por réplica (`a → 2, b → 3`). Cada réplica solo incrementa su propia
-entrada (`increment(replicaId, amount)`), así que el máximo de cada entrada es el valor correcto. Valor: la suma de
-las entradas. Orden: componente a componente. Join: máximo por réplica.
+#### 2P-Set
 
-El join usa `joinMaps(a, b, joinValues)` de `src/commons/maps.ts`: el resultado tiene las claves de los dos maps, y si
-una clave está en los dos, combina los valores con `joinValues`. El G-Counter lo usa con `Math.max`:
+Dos G-Sets: `added` y `removed` (tombstones). Está si está en `added` y no en `removed`. Un remove es para
+siempre: un elemento borrado no se puede volver a agregar. Los tombstones no se pueden eliminar sin coordinación
+(una réplica que no vio el remove lo haría volver: la resurrección de `3-cassandra-tombstones`).
 
-```ts
-join(crdt: GCounter): GCounter {
-  return new GCounter(joinMaps(this.counts, crdt.counts, Math.max));
-}
-```
+#### OR-Set (add wins)
 
-```ts
-const a = GCounter.bottom.increment('a', 2);
-const b = GCounter.bottom.increment('b', 3);
-a.join(b).value(); // 5
-```
+Cada add crea un **tag** único; los tags son determinísticos, `${replicaId}:${n}`, con `n` uno más que el último
+que usó esa réplica para ese elemento. Un remove agrega a `removes` solo los tags que **observó**. Un elemento
+está si tiene algún tag de add que no está en `removes`.
 
-#### PN-Counter
+Con add y remove concurrentes, el add creó un tag que el remove no vio, así que el elemento queda: gana add.
 
-`src/pncounter.ts`: dos G-Counters, `positive` (incrementos) y `negative` (decrementos). Valor:
-`positive - negative`. `decrement` es incrementar `negative`, así que el estado sigue creciendo y el join es el de
-cada G-Counter.
+![OR-Set, gana add: Node B recibe Xbox de Node A; después, a la vez, Node A borra Xbox y Node B lo agrega. El remove de Node A solo observó nodeA:1, así que nodeB:1 sigue vivo y los dos nodos quedan con {Xbox}.](img/orset-add-wins.svg)
 
-El valor puede quedar negativo (test `stock >= 0`): dos réplicas venden la última unidad a la vez. Es el
-invariante no I-confluent de `main`. Los counters de Cassandra son parecidos (una parte del counter por nodo).
+Se puede volver a agregar: cada add crea un tag nuevo, que ningún remove anterior observó.
 
-#### Limitación: replica ids sin límite
+![OR-Set, volver a agregar: Node A agrega Xbox, lo borra y lo vuelve a agregar. El remove canceló nodeA:1; el segundo add crea un tag nuevo, nodeA:2, que está vivo.](img/orset-readd.svg)
 
-El estado tiene una entrada por cada réplica que alguna vez escribió. Si cada cliente (browser, celular) es una
-réplica, el estado crece para siempre. Y una entrada de una réplica retirada no se puede borrar sin coordinación:
-si una réplica la borra y otra todavía la tiene, el join la vuelve a traer; si todas la borran, se pierden sus
-incrementos.
+Los tags borrados también son tombstones y crecen (hay versiones optimizadas que los reemplazan por version
+vectors).
 
-Soluciones:
+Un tag `(replicaId, n)` es un **dot**, como en los dotted version vectors de Riak: identifica un evento, y un remove
+cancela exactamente los dots que observó. Por eso los tags no se pueden repetir nunca.
 
-- Solo los nodos del servidor son réplicas (pocos ids, estables); los clientes le mandan incrementos a un nodo.
-  Es lo que hace Cassandra.
-- Garbage collection coordinado, o epochs: con consenso, se suman las entradas retiradas a un valor base y se
-  empieza una epoch nueva.
-- Handoff counters (Almeida y Baquero): los clientes le pasan su cuenta a un servidor con un protocolo de
-  handoff, y después su entrada se puede descartar.
+#### Remove-wins set
 
-**Siguiente:** [`7-crdt-sets`](https://github.com/fiubaTA050/leaderless-replication/tree/7-crdt-sets)
+Simétrico al OR-Set: el remove también crea un tag.
+
+- add: crea un tag de add y cancela (tombstone) los tags de remove que observó.
+- remove: crea un tag de remove y cancela los tags de add que observó.
+- Está si tiene un tag de add vivo y ningún tag de remove vivo.
+
+Con add y remove concurrentes, ninguno canceló el tag del otro: queda un tag de remove vivo y gana remove. En orden
+causal funciona como un set normal. Sirve cuando el remove es lo seguro (ej: revocar un permiso).
+
+![Remove-wins set: Node A agrega x e y y propaga; después Node A borra x mientras Node B agrega x. Al propagar, los dos nodos quedan con {y}: gana remove, porque el add no canceló el tag nodeA:2.](img/rwset.svg)
+
+### Edición de texto: Operational Transformation y CRDTs
+
+Editar el mismo texto desde varios lugares, incluso offline, tiene un problema propio: las operaciones usan
+posiciones, y una edición concurrente las cambia. Texto `abc`: A inserta `X` en la posición 1 (`aXbc`) y, a la vez,
+B borra la posición 2 (la `c`). Si A aplica el delete de B tal cual, borra la `b`.
+
+- **Operational Transformation (OT)**: transforma cada operación remota contra las concurrentes que ya se
+  aplicaron: el delete de la posición 2 pasa a ser de la posición 3. Google Docs usa OT: cada cambio va del editor
+  al servidor y de ahí a los demás editores, que lo transforman ([Google, 2010](https://drive.googleblog.com/2010/09/whats-different-about-new-google-docs_22.html)). En general OT necesita
+  un servidor que defina el orden de las operaciones.
+- **CRDTs de secuencias** (RGA, YATA en Yjs, Automerge): cada carácter tiene un id único y las operaciones apuntan a
+  ids, no a posiciones, así que conmutan sin transformarlas y no hace falta un servidor central.
+
+Las dos permiten editar offline y sincronizar después.
+
+### CRDTs en producción
+
+- **League of Legends (Riot Games)**: el chat guarda las listas de amigos y los datos de cada jugador como CRDTs en
+  Riak, para unos 70 millones de jugadores.
+  [Chat Service Architecture: Persistence](https://technology.riotgames.com/news/chat-service-architecture-persistence)
+- **Redis Enterprise Active-Active**: una base repartida en varias regiones donde todas aceptan writes; los
+  conflictos se resuelven solo con CRDTs.
+  [Active-Active geo-distributed Redis](https://redis.io/docs/latest/operate/rs/databases/active-active/)
+- **Yjs y Automerge**: librerías open source de CRDTs para aplicaciones colaborativas (texto, listas, mapas, JSON).
+  [Yjs](https://yjs.dev/), [Automerge](https://automerge.org/)
+- **Figma**: el multiplayer está inspirado en CRDTs, sin ser un CRDT puro: cada propiedad de cada objeto se resuelve
+  por separado, y gana el último valor que recibe el servidor.
+  [How Figma's multiplayer technology works](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/)
+
+### Referencias
+
+CRDTs:
+
+- Shapiro, Preguiça, Baquero, Zawirski. [Conflict-free Replicated Data Types](https://inria.hal.science/inria-00609399).
+  SSS 2011. El paper corto: definición de strong eventual consistency y de CRDTs state-based y op-based.
+- Bieniusa et al. [An optimized conflict-free replicated set](https://arxiv.org/abs/1210.3368). 2012. OR-Set sin
+  tombstones (ORSWOT).
+- Almeida, Baquero. [Scalable Eventually Consistent Counters over Unreliable Networks](https://arxiv.org/abs/1307.3207).
+  2013. Handoff counters.
+- [crdt.tech](https://crdt.tech/): papers, implementaciones y charlas sobre CRDTs.
+- Kleppmann, Wiggins, van Hardenberg, McGranaghan. [Local-first software: You own your data, in spite of the
+  cloud](https://www.inkandswitch.com/essay/local-first/). Onward! 2019. Aplicaciones que funcionan offline y
+  sincronizan con CRDTs.
+
+Clocks y causalidad:
+
+- Preguiça, Baquero, Almeida, Fonte, Gonçalves. [Dotted Version Vectors: Logical Clocks for Optimistic
+  Replication](https://arxiv.org/abs/1011.5808). 2010.
+- Baquero. [Version Vectors are not Vector Clocks](https://haslab.wordpress.com/2011/07/08/version-vectors-are-not-vector-clocks/).
+  2011. Vector clocks ordenan eventos (ej: entrega causal de mensajes); version vectors ordenan estados de réplicas
+  (datos replicados, como en Riak).
+
+Edición de texto:
+
+- Ellis, Gibbs. [Concurrency Control in Groupware Systems](https://doi.org/10.1145/67544.66963). SIGMOD 1989. El
+  paper original de Operational Transformation.
+- [Operational transformation](https://en.wikipedia.org/wiki/Operational_transformation) (Wikipedia): resumen del
+  algoritmo y de sus variantes.
+- Day-Richter (Google). [What's different about the new Google Docs: Conflict resolution](https://drive.googleblog.com/2010/09/whats-different-about-new-google-docs_22.html). 2010. Cómo
+  Google Docs usa OT.
+- Kleppmann, Beresford. [A Conflict-Free Replicated JSON Datatype](https://arxiv.org/abs/1608.03960). 2017. El CRDT
+  de documentos JSON (con texto, listas y mapas) en el que se basa Automerge.
+- [Automerge](https://automerge.org/): librería de CRDTs para documentos JSON y texto colaborativo.
+
+Bases leaderless:
+
+- Bailis, Fekete, Franklin, Ghodsi, Hellerstein, Stoica. [Coordination Avoidance in Database
+  Systems](https://www.vldb.org/pvldb/vol8/p185-bailis.pdf). PVLDB 8(3), 2014.
+- Kleppmann. [Designing Data-Intensive Applications](https://dataintensive.net/). Capítulo 5: replicación
+  leaderless.
+
+Cassandra:
+
+- [Dynamo](https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html): ring, consistency levels,
+  hints.
+- [Repair](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/repair.html).
+- [Tombstones](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/tombstones.html).
+
+Riak (KV 2.2.3):
+
+- [Causal Context](https://docs.riak.com/riak/kv/2.2.3/learn/concepts/causal-context/index.html): vector clocks,
+  dotted version vectors y sibling explosion.
+- [Conflict Resolution](https://docs.riak.com/riak/kv/2.2.3/developing/usage/conflict-resolution/index.html).
+
+Herramientas:
+
+- [fast-check](https://fast-check.dev/): property-based testing para JavaScript y TypeScript.

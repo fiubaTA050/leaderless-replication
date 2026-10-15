@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1280" viewBox="0 0 1080 1280" role="img" aria-label="Remove-wins set: Node A agrega x e y y propaga; después Node A borra x mientras Node B agrega x. Al propagar, los dos nodos quedan con {y}: gana remove, porque el add no canceló el tag nodeA:2.">
+  <rect width="1080" height="1280" rx="12" fill="#ffffff"/>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#57606a"/></marker>
+    <marker id="prop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0969da"/></marker>
+  </defs>
+  <g font-family="ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="18" font-weight="bold" fill="#1f2328" text-anchor="middle">
+    <text x="260" y="40">Node A</text>
+    <text x="820" y="40">Node B</text>
+  </g>
+  <g stroke="#57606a" stroke-width="1.5">
+    <line x1="260" y1="202" x2="260" y2="254" marker-end="url(#arrow)"/>
+    <line x1="260" y1="434" x2="260" y2="718" marker-end="url(#arrow)"/>
+    <line x1="260" y1="920" x2="260" y2="972" marker-end="url(#arrow)"/>
+    <line x1="820" y1="666" x2="820" y2="718" marker-end="url(#arrow)"/>
+    <line x1="820" y1="898" x2="820" y2="972" marker-end="url(#arrow)"/>
+  </g>
+  <g stroke="#0969da" stroke-width="1.5" stroke-dasharray="6 4">
+    <line x1="490" y1="346" x2="586" y2="578" marker-end="url(#prop)"/>
+    <line x1="590" y1="810" x2="494" y2="1064" marker-end="url(#prop)"/>
+    <line x1="490" y1="821" x2="586" y2="1064" marker-end="url(#prop)"/>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" fill="#1f2328">
+    <rect x="30" y="70" width="460" height="132" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="46" y="96" font-weight="bold">add(&#x27;x&#x27;, &#x27;nodeA&#x27;)</text>
+    <text x="46" y="124" xml:space="preserve">adds        x → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="146" xml:space="preserve" opacity="0.35">removes     <tspan fill="#8c959f">(vacío)</tspan></text>
+    <text x="46" y="168" xml:space="preserve">tombstones  x → {}</text>
+    <text x="46" y="190" xml:space="preserve">value()     {x}</text>
+    <rect x="30" y="258" width="460" height="176" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="46" y="284" font-weight="bold">add(&#x27;y&#x27;, &#x27;nodeA&#x27;)</text>
+    <text x="46" y="312" xml:space="preserve" opacity="0.35">adds        x → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="334" xml:space="preserve">            y → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="356" xml:space="preserve" opacity="0.35">removes     <tspan fill="#8c959f">(vacío)</tspan></text>
+    <text x="46" y="378" xml:space="preserve" opacity="0.35">tombstones  x → {}</text>
+    <text x="46" y="400" xml:space="preserve">            y → {}</text>
+    <text x="46" y="422" xml:space="preserve">value()     {x, y}</text>
+    <rect x="590" y="490" width="460" height="176" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="606" y="516" font-weight="bold">recibe de Node A (aplica join)</text>
+    <text x="606" y="544" xml:space="preserve">adds        x → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="606" y="566" xml:space="preserve">            y → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="606" y="588" xml:space="preserve" opacity="0.35">removes     <tspan fill="#8c959f">(vacío)</tspan></text>
+    <text x="606" y="610" xml:space="preserve">tombstones  x → {}</text>
+    <text x="606" y="632" xml:space="preserve">            y → {}</text>
+    <text x="606" y="654" xml:space="preserve">value()     {x, y}</text>
+    <rect x="30" y="722" width="460" height="198" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="46" y="748" font-weight="bold">remove(&#x27;x&#x27;, &#x27;nodeA&#x27;)</text>
+    <text x="46" y="776" xml:space="preserve"><tspan fill="#57606a" font-style="italic">observó     x → {<tspan font-weight="bold">nodeA:1</tspan>}</tspan></text>
+    <text x="46" y="798" xml:space="preserve">adds        x → {<tspan fill="#8c959f" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="820" xml:space="preserve" opacity="0.35">            y → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="842" xml:space="preserve">removes     x → {<tspan fill="#cf222e" font-weight="bold">nodeA:2</tspan>}</text>
+    <text x="46" y="864" xml:space="preserve">tombstones  x → {<tspan fill="#8c959f" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="886" xml:space="preserve" opacity="0.35">            y → {}</text>
+    <text x="46" y="908" xml:space="preserve">value()     {y}</text>
+    <rect x="590" y="722" width="460" height="176" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="606" y="748" font-weight="bold">add(&#x27;x&#x27;, &#x27;nodeB&#x27;)</text>
+    <text x="606" y="776" xml:space="preserve">adds        x → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>, <tspan fill="#1a7f37" font-weight="bold">nodeB:1</tspan>}</text>
+    <text x="606" y="798" xml:space="preserve" opacity="0.35">            y → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="606" y="820" xml:space="preserve" opacity="0.35">removes     <tspan fill="#8c959f">(vacío)</tspan></text>
+    <text x="606" y="842" xml:space="preserve" opacity="0.35">tombstones  x → {}</text>
+    <text x="606" y="864" xml:space="preserve" opacity="0.35">            y → {}</text>
+    <text x="606" y="886" xml:space="preserve" opacity="0.35">value()     {x, y}</text>
+    <rect x="30" y="976" width="460" height="176" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="46" y="1002" font-weight="bold">recibe de Node B (aplica join)</text>
+    <text x="46" y="1030" xml:space="preserve">adds        x → {<tspan fill="#8c959f" font-weight="bold">nodeA:1</tspan>, <tspan fill="#1a7f37" font-weight="bold">nodeB:1</tspan>}</text>
+    <text x="46" y="1052" xml:space="preserve" opacity="0.35">            y → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="1074" xml:space="preserve" opacity="0.35">removes     x → {<tspan fill="#cf222e" font-weight="bold">nodeA:2</tspan>}</text>
+    <text x="46" y="1096" xml:space="preserve" opacity="0.35">tombstones  x → {<tspan fill="#8c959f" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="46" y="1118" xml:space="preserve" opacity="0.35">            y → {}</text>
+    <text x="46" y="1140" xml:space="preserve" opacity="0.35">value()     {y}</text>
+    <rect x="590" y="976" width="460" height="176" rx="8" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="606" y="1002" font-weight="bold">recibe de Node A (aplica join)</text>
+    <text x="606" y="1030" xml:space="preserve">adds        x → {<tspan fill="#8c959f" font-weight="bold">nodeA:1</tspan>, <tspan fill="#1a7f37" font-weight="bold">nodeB:1</tspan>}</text>
+    <text x="606" y="1052" xml:space="preserve" opacity="0.35">            y → {<tspan fill="#1a7f37" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="606" y="1074" xml:space="preserve">removes     x → {<tspan fill="#cf222e" font-weight="bold">nodeA:2</tspan>}</text>
+    <text x="606" y="1096" xml:space="preserve">tombstones  x → {<tspan fill="#8c959f" font-weight="bold">nodeA:1</tspan>}</text>
+    <text x="606" y="1118" xml:space="preserve" opacity="0.35">            y → {}</text>
+    <text x="606" y="1140" xml:space="preserve">value()     {y}</text>
+    <text x="540" y="1122" text-anchor="middle" font-size="22" font-weight="bold" fill="#57606a">=</text>
+    <text x="540" y="1142" text-anchor="middle" font-size="12" fill="#57606a">mismo estado</text>
+    <text x="540" y="1182" text-anchor="middle" font-style="italic" fill="#57606a">Los dos nodos convergen a {y}. Gana remove: el add no vio nodeA:2.</text>
+    <rect x="30" y="1211" width="14" height="14" rx="3" fill="#1a7f37"/>
+    <text x="52" y="1222">tag de add vivo</text>
+    <rect x="208.0" y="1211" width="14" height="14" rx="3" fill="#cf222e"/>
+    <text x="230.0" y="1222">tag de remove vivo</text>
+    <rect x="411.20000000000005" y="1211" width="14" height="14" rx="3" fill="#8c959f"/>
+    <text x="433.20000000000005" y="1222">tag cancelado (en tombstones)</text>
+    <text x="706.8000000000001" y="1222" opacity="0.35">abc</text>
+    <text x="744.8000000000001" y="1222">no cambió en este paso</text>
+    <line x1="30" y1="1246" x2="60" y2="1246" stroke="#57606a" stroke-width="1.5"/>
+    <text x="68" y="1250">update local</text>
+    <line x1="198.8" y1="1246" x2="228.8" y2="1246" stroke="#0969da" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="236.8" y="1250">propagación: el nodo aplica join del estado recibido</text>
+  </g>
+</svg>

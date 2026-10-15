@@ -11,3 +11,12 @@ it('writes concurrentes: gana el timestamp mayor y el otro se pierde', () => {
   const b = LWWRegister.bottom.set('Beto', 1000);
   return expect(a.join(b).value()).toBe('Ana');
 });
+
+it('un write con el reloj atrasado se ignora, aunque sea posterior', () =>
+  expect(LWWRegister.bottom.set('Ana', 61_000).set('Beto', 1000).value()).toBe('Ana'));
+
+it('timestamps iguales: gana el de JSON mayor, sea del tipo que sea', () => {
+  const a = LWWRegister.bottom.set({ nombre: 'Ana' }, 1000);
+  const b = LWWRegister.bottom.set({ nombre: 'Beto' }, 1000);
+  return expect(a.join(b).value()).toEqual({ nombre: 'Beto' });
+});
