@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="350" viewBox="0 0 480 350" role="img" aria-label="Diagrama de Hasse de los subconjuntos de {a,b,c} ordenados por inclusión">
+  <rect width="480" height="350" rx="12" fill="#ffffff"/>
+  <g stroke="#57606a" stroke-width="1.5">
+    <line x1="240" y1="299" x2="100" y2="241"/>
+    <line x1="240" y1="299" x2="240" y2="241"/>
+    <line x1="240" y1="299" x2="380" y2="241"/>
+    <line x1="100" y1="209" x2="100" y2="151"/>
+    <line x1="100" y1="209" x2="240" y2="151"/>
+    <line x1="240" y1="209" x2="100" y2="151"/>
+    <line x1="240" y1="209" x2="380" y2="151"/>
+    <line x1="380" y1="209" x2="240" y2="151"/>
+    <line x1="380" y1="209" x2="380" y2="151"/>
+    <line x1="100" y1="119" x2="240" y2="61"/>
+    <line x1="240" y1="119" x2="240" y2="61"/>
+    <line x1="380" y1="119" x2="240" y2="61"/>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#1f2328" text-anchor="middle" dominant-baseline="central">
+    <rect x="202" y="29" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="240" y="45">{a,b,c}</text>
+    <rect x="62" y="119" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="100" y="135">{a,b}</text>
+    <rect x="202" y="119" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="240" y="135">{a,c}</text>
+    <rect x="342" y="119" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="380" y="135">{b,c}</text>
+    <rect x="62" y="209" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="100" y="225">{a}</text>
+    <rect x="202" y="209" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="240" y="225">{b}</text>
+    <rect x="342" y="209" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="380" y="225">{c}</text>
+    <rect x="202" y="299" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
+    <text x="240" y="315">{}</text>
+  </g>
+</svg>

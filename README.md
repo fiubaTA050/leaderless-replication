@@ -2,186 +2,136 @@
 
 Dependencias y secuencia completa de la clase: [`main`](https://github.com/fiubaTA050/leaderless-replication/tree/main).
 
-## Parte 3: Riak
+## Parte 4: CRDTs
 
-Riak KV es el más parecido a Dynamo: consistent hashing, `N`/`R`/`W` por request, sloppy quorum con hinted
-handoff, y conflictos que se le devuelven al cliente como **siblings** (en vez de LWW como Cassandra).
+Conflict-free Replicated Data Types: tipos de datos cuyas réplicas aceptan updates sin coordinación y siempre
+convergen, sin conflictos que resolver.
 
-### Branch `4-riak-siblings`: siblings y dotted version vectors
+Beneficio principal: cada réplica aplica sus updates localmente, sin hablar con ningún otro nodo en cada operación.
+Una réplica puede ser un servidor, pero también un celular o un browser: sigue funcionando offline o con la red
+partida, cada operación tiene la latencia de un cambio local, y los cambios se sincronizan cuando hay conexión
+(local-first).
 
-```bash
-git checkout 4-riak-siblings
-cd riak
-docker compose up -d --wait
-```
+Dos familias:
 
-Un solo nodo (la imagen es vieja, Riak 2.2.3, y en Apple Silicon corre emulada): alcanza para ver siblings, que
-dependen del causal context y no de la cantidad de nodos. Ese nodo igual guarda `n_val = 3` copias en vnodes
-distintos.
+- **State-based** (CvRDT): las réplicas se mandan el estado completo y lo combinan con `join`.
+- **Operation-based** (CmRDT): las réplicas se mandan operaciones; necesitan entrega causal y exactly-once.
 
-Bucket type con siblings (`allow_mult`) y dotted version vectors (`dvv_enabled`):
+Vemos solo state-based (sin delta-state). Código en `crdt/`: TypeScript, tests con vitest y fast-check.
 
-```bash
-docker exec riak-riak-1 riak-admin bucket-type create siblings '{"props":{"allow_mult":true,"dvv_enabled":true}}'
-docker exec riak-riak-1 riak-admin bucket-type activate siblings
-```
-
-#### 1. Causal context: `X-Riak-Vclock`
+### Branch `5-crdt-lww`: join-semilattice y LWW-Register
 
 ```bash
-URL=localhost:8098/types/siblings/buckets/carts/keys/ana
-curl -XPUT $URL -H 'content-type: text/plain' -d 'leche'
-curl -I $URL
+git checkout 5-crdt-lww
+cd crdt
+npm install
+npm test
 ```
 
-Cada GET devuelve el valor y un causal context opaco (`X-Riak-Vclock`): "estos son los writes que vi". El
-cliente lo manda en el PUT siguiente para decir qué valores reemplaza.
+#### Join-semilattice
 
-#### 2. Dos writes concurrentes con el mismo context
+Un **orden parcial** `≤` es reflexivo, antisimétrico y transitivo, pero no todo par es comparable. Ejemplo: los
+subconjuntos de `{a,b,c}` ordenados por `⊆`; `{a}` y `{b}` no son comparables. El diagrama de Hasse muestra ese
+orden:
 
-Los dos clientes leyeron el mismo carrito y agregan cosas distintas:
+![Diagrama de Hasse de los subconjuntos de {a,b,c} ordenados por inclusión](img/hasse.svg)
 
-```bash
-VCLOCK=$(curl -sI $URL | awk '/X-Riak-Vclock/ {print $2}' | tr -d '\r')
-curl -XPUT $URL -H 'content-type: text/plain' -H "X-Riak-Vclock: $VCLOCK" -d 'leche,pan'
-curl -XPUT $URL -H 'content-type: text/plain' -H "X-Riak-Vclock: $VCLOCK" -d 'leche,huevos'
+Cómo se lee:
+
+- Cada línea une un elemento con otro que está justo arriba en el orden, sin ninguno en el medio: `{a}` con
+  `{a,b}`, pero no `{a}` con `{a,b,c}`.
+- `x ≤ y` si se puede llegar de `x` a `y` subiendo por líneas: `{a} ≤ {a,b,c}` (pasando por `{a,b}` o `{a,c}`).
+- Si no hay camino subiendo de uno al otro, no son comparables: `{a}` y `{b}`.
+- El join de dos elementos es el primero al que se llega subiendo desde los dos: `{a} ⊔ {b} = {a,b}`.
+
+El **least upper bound** (join, `⊔`) de `x` e `y` es el menor elemento que es `≥` que los dos. Acá es la unión:
+`{a} ⊔ {b} = {a,b}`, `{a,b} ⊔ {b,c} = {a,b,c}`. Un **join-semilattice** es un orden parcial donde todo par tiene
+join. Abajo de todo está **bottom** (`{}`): el estado inicial, antes de cualquier update.
+
+Un join-semilattice queda completamente definido por:
+
+| Componente | Qué es | En el ejemplo |
+| --- | --- | --- |
+| Dominio `S` | el conjunto de todos los valores (estados) posibles | los subconjuntos de `{a,b,c}` |
+| Join `⊔ : S × S → S` | combina dos valores en otro de `S`; tiene que ser conmutativo, asociativo e idempotente | unión |
+| Orden `≤` | sale del join: `a ≤ b` si `a ⊔ b = b` ("`b` ya incluye a `a`") | `⊆` |
+| Bottom `⊥` (opcional) | el menor de todos: `⊥ ⊔ a = a` para todo `a` | `{}` |
+
+Con el dominio y el join alcanza: el orden se deduce del join (y al revés: dado el orden, el join es el least
+upper bound). Bottom no es obligatorio para ser un semilattice, pero un CRDT lo necesita como estado inicial de
+cada réplica.
+
+| Propiedad del join | Qué permite |
+| --- | --- |
+| Conmutativo: `a ⊔ b = b ⊔ a` | los estados pueden llegar en cualquier orden |
+| Asociativo: `(a ⊔ b) ⊔ c = a ⊔ (b ⊔ c)` | da igual si llegan directo o a través de otra réplica |
+| Idempotente: `a ⊔ a = a` | los duplicados no cambian nada (alcanza con at-least-once) |
+
+Además:
+
+- **Updates inflationary**: cada update solo sube en el orden (`s ≤ update(s)`). Un join nunca deshace un update.
+- **Eventual delivery**: es un supuesto, no una garantía. El sistema tiene que hacer llegar cada estado a las demás
+  réplicas (gossip, anti-entropy, reintentos…). Si una réplica nunca lo recibe (nunca se reconecta, o el estado se
+  perdió), no converge: un CRDT no puede arreglar eso.
+
+Con todo eso hay **strong eventual consistency**: dos réplicas que recibieron los mismos updates (en cualquier
+orden, con duplicados) están en el mismo estado. Sigue siendo eventual: un update tarda en llegar a todas las
+réplicas, y mientras tanto pueden diferir. Lo "strong" es que no hace falta nada más para converger (resolver
+conflictos, elegir un ganador, hacer rollback): alcanza con que les lleguen los mismos updates.
+
+Ejemplos de dominios con una operación que es un join:
+
+| Dominio | Join | Ejemplo de uso |
+| --- | --- | --- |
+| Números | `max` | el precio más alto ofrecido en una subasta |
+| Booleans | `or` | un flag que solo se prende ("aceptó los términos") |
+| Conjuntos | unión | tags que solo se agregan |
+| Estados que solo avanzan (`creado < pagado < enviado < entregado`) | el más avanzado | estado de un envío |
+
+Operaciones que **no** sirven como join:
+
+- Suma: `a + a ≠ a` (no es idempotente). Si un estado llega dos veces, se cuenta dos veces.
+- Resta: `a - b ≠ b - a` (no es conmutativa).
+- Promedio: `avg(avg(a, b), c) ≠ avg(a, avg(b, c))` (no es asociativo).
+
+Comparación con lo que vimos:
+
+- LWW de Cassandra también es un join-semilattice (orden por timestamp), pero el orden descarta writes
+  concurrentes.
+- Los siblings de Riak también son un join-semilattice: el estado son los valores concurrentes, cada uno con su dot,
+  y el join entre réplicas se queda con los que ningún write posterior reemplazó (es un CRDT llamado
+  Multi-Value Register). Lo que queda a cargo de la aplicación es combinar los siblings en un solo valor, y esa
+  combinación no tiene por qué ser un join (la unión del carrito resucita items borrados).
+- Al diseñar un CRDT se eligen el estado y el join (y con eso, el orden) para que el join conserve lo que importa
+  de cada update, en vez de descartar uno de los writes concurrentes como hace LWW.
+
+#### LWW-Register
+
+En `crdt/src` implementamos un LWW-Register (`src/lwwregister.ts`).
+
+Cada CRDT es una clase que implementa la interfaz `Crdt` de `src/crdt.ts`: `join` y `value`, lo que ve la
+aplicación. Bottom es un atributo `static bottom` de cada clase (una interface no puede declarar miembros static).
+
+```ts
+export interface Crdt<T, V> {
+  join(crdt: T): T;
+  value(): V;
+  // Solo para los tests: compara el estado completo, no solo value()
+  equals(crdt: T): boolean;
+}
 ```
 
-Ninguno vio al otro: son concurrentes y Riak guarda los dos.
+Los estados no se modifican: cada update es un método que devuelve un estado nuevo. Por eso todas las réplicas
+comparten la misma instancia de `bottom`. En `LWWRegister`, el update es `set(value, timestamp)`:
 
-```bash
-curl -i $URL
-curl $URL -H 'Accept: multipart/mixed'
+```ts
+const a = LWWRegister.bottom.set('Ana', 1001);
+const b = LWWRegister.bottom.set('Beto', 1000);
+a.join(b).value(); // 'Ana'
 ```
 
-`300 Multiple Choices` con la lista de siblings; con `multipart/mixed`, los dos valores. `leche` ya no está como
-sibling: los dos writes lo reemplazaban.
+El valor puede ser de cualquier tipo. Con timestamps iguales, gana el valor con el `JSON.stringify` mayor: es un
+desempate arbitrario, pero todas las réplicas eligen el mismo, así que el join sigue siendo conmutativo. Bottom
+tiene timestamp `-Infinity`: cualquier write le gana, así que el join no necesita un caso especial para bottom.
 
-#### 3. El cliente hace el merge
-
-El cliente combina los siblings (acá, unión de items) y escribe el resultado con el context del `300`, que cubre
-a los dos siblings:
-
-```bash
-VCLOCK=$(curl -sI $URL | awk '/X-Riak-Vclock/ {print $2}' | tr -d '\r')
-curl -XPUT $URL -H 'content-type: text/plain' -H "X-Riak-Vclock: $VCLOCK" -d 'leche,pan,huevos'
-curl -i $URL
-```
-
-`200 OK` con un solo valor. Un PUT **sin** context es concurrente con todo y genera otro sibling:
-
-```bash
-curl -XPUT $URL -H 'content-type: text/plain' -d 'yerba'
-curl $URL -H 'Accept: multipart/mixed'
-```
-
-El merge es lógica de la aplicación: con unión, un item que un cliente borró y otro no vuelve a aparecer (el
-carrito de Dynamo).
-
-##### Merge de una entidad de negocio
-
-Con un string de items el merge es fácil. Con una entidad real, por ejemplo una orden, los siblings son dos
-versiones completas de la entidad:
-
-```json
-{ "items": [{ "sku": "A", "qty": 2 }],              "address": "Paseo Colón 850",  "status": "paid",      "total": 200 }
-{ "items": [{ "sku": "A", "qty": 1 }, { "sku": "B" }], "address": "Av. Las Heras 2214", "status": "cancelled", "total": 250 }
-```
-
-¿Cuál es el merge correcto? No hay una respuesta genérica:
-
-- **Sin la versión original no se sabe qué cambió cada uno**: Riak devuelve los siblings, no el ancestro común. Si
-  `B` está en un sibling y no en el otro, ¿uno lo agregó o el otro lo borró? Unión resucita borrados, intersección
-  pierde agregados.
-- **Mismo campo, valores distintos**: dos direcciones, dos cantidades del mismo item. Elegir una pierde la intención
-  de alguien; mezclar campos de versiones distintas (calle de una, ciudad de otra) arma una entidad que nadie
-  escribió, como la fila mezclada de `2-cassandra-lww`.
-- **Campos que dependen de otros**: `total` se calcula con los items, descuentos e impuestos. Mergear campo por
-  campo deja un `total` inconsistente; hay que recalcularlo con las reglas de negocio.
-- **Máquinas de estado**: `paid` y `cancelled` a la vez no es un merge, es una decisión de negocio (¿reembolso?).
-  Y los efectos de cada versión ya ocurrieron: el pago se cobró, el mail de cancelación se mandó, el stock se
-  reservó.
-- **Invariantes**: dos versiones válidas pueden dar una inválida (stock negativo, cupón de un solo uso aplicado
-  dos veces, límite de crédito superado): los invariantes no I-confluent de `main`.
-- **El merge también tiene que converger**: puede haber más de 2 siblings, y dos clientes pueden hacer el merge a
-  la vez. Si no da el mismo resultado sin importar el orden ni las repeticiones, el merge genera siblings nuevos.
-  Todos los clientes tienen que correr el mismo código de merge, incluso con versiones distintas de la aplicación
-  (y del schema de la entidad) en producción al mismo tiempo.
-- **El conflicto aparece tarde**: se resuelve en el próximo read, que puede ser días después y en otro servicio,
-  sin el contexto de quién cambió qué ni por qué.
-
-Qué se hace en la práctica:
-
-- Guardar operaciones en vez de estado ("agregó B", "cambió la dirección"), con un id único cada una, y calcular el
-  estado a partir de ellas: el merge pasa a ser juntar operaciones.
-- Partir la entidad en keys más chicas (items, dirección, estado por separado) para que los conflictos sean más
-  chicos y más fáciles de resolver.
-- Marcar los borrados (`"removed": true`) en vez de sacar el elemento, para distinguir "borrado" de "nunca lo vi".
-- Mostrarle el conflicto a una persona cuando no hay regla automática (como un merge conflict de git).
-- Lo que tiene invariantes fuertes (pagos, stock) va a una base con coordinación (leader, transactions).
-
-#### 4. Dotted version vectors y sibling explosion
-
-Un **version vector** es un mapa `{nodo: contador}` que resume qué writes se vieron: `{v:3}` significa "vi los
-writes 1, 2 y 3 del nodo `v`". Se comparan entrada por entrada: si `A ≤ B` en todas, `B` desciende de `A` (lo
-reemplaza); si ninguno es `≤` que el otro, son concurrentes (siblings).
-
-Riak 2 sin DVV guarda **un solo** version vector por objeto, con una entrada por vnode (no por cliente, para que
-no crezca con cada cliente que escribe). Todos los siblings comparten ese clock. Cuando llega un PUT con un
-context viejo, el vnode sabe que el cliente no vio todo, pero no sabe **cuáles** siblings vio: el clock dice "vi
-`v:1`", y ningún sibling dice "yo soy `v:1`". Así que guarda todos los siblings y agrega el nuevo.
-
-Un **dotted version vector** (DVV) mantiene el context por vnode, pero además cada sibling guarda su **dot**
-`(vnode, contador)`: el write exacto que lo creó. Un PUT con context `C`:
-
-1. Elimina los siblings cuyo dot está cubierto por `C` (`(v, n)` con `n ≤ C[v]`): el cliente los vio y los
-   reemplaza.
-2. Conserva los demás: son concurrentes con el PUT.
-3. Agrega el valor nuevo con un dot nuevo `(v, máximo + 1)`.
-
-Las dos primeras rondas de `explosion.sh` (X e Y escriben alternados, cada uno con el context que recibió en su
-propio write anterior), con un solo vnode `v`:
-
-```mermaid
-sequenceDiagram
-    participant X
-    participant R as Riak (vnode v)
-    participant Y
-    X->>R: PUT x1, context {}
-    Note over R: VV: x1, clock {v:1}<br/>DVV: x1@(v,1)
-    R-->>X: context {v:1}
-    Y->>R: PUT y1, context {}
-    Note over R: VV: x1 y1, clock {v:2}<br/>DVV: x1@(v,1) y1@(v,2)
-    R-->>Y: context {v:2}
-    X->>R: PUT x2, context {v:1}
-    Note over R: VV: x1 y1 x2, clock {v:3}<br/>DVV: y1@(v,2) x2@(v,3)
-    Y->>R: PUT y2, context {v:2}
-    Note over R: VV: x1 y1 x2 y2, clock {v:4}<br/>DVV: x2@(v,3) y2@(v,4)
-```
-
-- **VV** (**sibling explosion**): `x2` viene con context `{v:1}`, más viejo que el clock `{v:2}`, así que Riak
-  conserva todo, incluido `x1`, que X ya había visto y estaba reemplazando. Cada ronda suma 2 siblings, para
-  siempre, aunque nunca hay más de 2 writes concurrentes.
-- **DVV**: el context `{v:1}` cubre el dot de `x1`, así que `x2` lo reemplaza; `y1` (`(v,2)`) no está cubierto y
-  queda como sibling. Siempre quedan solo los 2 writes realmente concurrentes.
-
-¿Y un version vector con una entrada por cliente? También resuelve la explosión, pero crece con cada cliente que
-alguna vez escribió (miles), y recortarlo (pruning) pierde información de causalidad: siblings falsos o writes
-perdidos. Con DVV el tamaño queda acotado por la cantidad de réplicas.
-
-```bash
-docker exec riak-riak-1 riak-admin bucket-type create vclocks '{"props":{"allow_mult":true,"dvv_enabled":false}}'
-docker exec riak-riak-1 riak-admin bucket-type activate vclocks
-./explosion.sh
-```
-
-`explosion.sh`: X e Y escriben alternados en la misma key, cada uno con el context de su propio write anterior.
-Con `vclocks` los siblings crecen de a 2 por ronda (`x1 … x5 y1 … y5`); con `siblings` (DVV) quedan
-siempre los 2 últimos (`x5 y5`).
-
-```bash
-docker compose down -v
-cd ..
-```
-
-**Siguiente:** [`5-crdt-lww`](https://github.com/fiubaTA050/leaderless-replication/tree/5-crdt-lww)
+**Siguiente:** [`6-crdt-counters`](https://github.com/fiubaTA050/leaderless-replication/tree/6-crdt-counters)
