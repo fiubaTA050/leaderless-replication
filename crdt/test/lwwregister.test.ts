@@ -2,7 +2,12 @@ import { it, expect } from 'vitest';
 import fc from 'fast-check';
 import { LWWRegister } from '../src/lwwregister.ts';
 
-const lwwregisterArbitrary = fc.array(fc.tuple(fc.nat(), fc.nat()))
+// Epoch en segundos dentro de un minuto desde windowStart: pocos valores posibles, así que hay timestamps iguales y
+// se prueba el desempate
+const windowStart = 1792108800; // 2026-10-16 00:00:00 UTC
+const timestampArb = fc.integer({ min: windowStart, max: windowStart + 60 });
+
+const lwwregisterArbitrary = fc.array(fc.tuple(fc.nat(), timestampArb))
   .map((updates) => updates.reduce((crdt, [v, t]) => crdt.set(v, t), LWWRegister.bottom));
 
 it('join es conmutativo', () => fc.assert(fc.property(lwwregisterArbitrary, lwwregisterArbitrary, (a, b) =>
