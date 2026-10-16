@@ -21,7 +21,13 @@ docker network inspect cassandra_default --format '{{range .Containers}}{{.Name}
 
 # cqlsh contra un nodo (ese nodo es el coordinator)
 docker exec -it cassandra-node1-1 cqlsh
+
+# UI web (Reaper): agregar el cluster una vez y abrir http://localhost:8080/webui
+curl -X POST "localhost:8080/cluster?seedHost=node1&jmxPort=7199"
 ```
+
+Reaper muestra los nodos agrupados por datacenter y rack (en rojo los caídos, según gossip) y permite correr
+repairs (anti-entropy) desde la UI.
 
 ### Branch `1-cassandra-cluster`: coordinator, consistency levels, hints y read repair
 
