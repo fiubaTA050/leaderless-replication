@@ -98,6 +98,19 @@ El cliente tiene que trabajar dentro de estos límites. Ejemplos:
     uno a propósito.
 - Para lo que sí necesita coordinación, pagarla solo ahí: lightweight transactions de Cassandra (`IF NOT EXISTS`,
   Paxos), o mover esa parte a una base con leader.
+
+  Ej: id elegido por el usuario. Un `INSERT` con `CONSISTENCY ALL` **no** garantiza que sea único:
+  - Todo `INSERT` es un upsert: Cassandra no verifica si la key existe. Un segundo insert con el mismo id pisa al
+    primero y responde OK, aunque sean secuenciales.
+  - Dos inserts concurrentes con el mismo id reciben OK de todas las réplicas; las réplicas resuelven con LWW por
+    timestamp y uno de los dos se pierde sin que ningún cliente se entere.
+  - Leer con `ALL` antes de insertar tampoco sirve: es check-then-act, otro cliente puede escribir en el medio.
+  - `ALL` además baja la disponibilidad (si una réplica está caída, el write falla) y un timeout no es rollback.
+
+  Lo que sí funciona es `INSERT ... IF NOT EXISTS`: corre Paxos entre las réplicas (`SERIAL` o `LOCAL_SERIAL`) y
+  devuelve `[applied] = false` si la key ya existe. Dos cuidados: todos los writes a esa key tienen que usar LWT
+  (mezclarlos con writes comunes rompe la garantía), y un `WriteTimeout` de tipo `CAS` es ambiguo, así que hay que
+  leer con `SERIAL` para saber si se aplicó.
 - Aceptar la violación y compensar después (ej: vender de más y cancelar una compra).
 
 ### Coordination avoidance (Bailis et al., VLDB 2014)
