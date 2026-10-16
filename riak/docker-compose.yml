@@ -4,7 +4,7 @@ services:
     image: basho/riak-kv
     platform: linux/amd64
     ports:
-      # HTTP API
+      # HTTP API y Riak Explorer, la UI web (http://localhost:8098/admin)
       - "8098:8098"
     healthcheck:
       # Riak escucha en la IP del container, no en localhost. /ping responde antes de que KV funcione:
