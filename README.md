@@ -34,7 +34,7 @@ Un **orden parcial** `≤` es reflexivo, antisimétrico y transitivo, pero no to
 subconjuntos de `{a,b,c}` ordenados por `⊆`; `{a}` y `{b}` no son comparables. El diagrama de Hasse muestra ese
 orden:
 
-![Diagrama de Hasse de los subconjuntos de {a,b,c} ordenados por inclusión](img/hasse.svg)
+![Diagrama de Hasse de los subconjuntos de {a,b,c} ordenados por inclusión. Resaltado: el join de {a} y {b} es {a,b}, el primero al que se llega subiendo desde los dos.](img/hasse.svg)
 
 Cómo se lee:
 
