@@ -44,7 +44,11 @@ En este cluster cada nodo tiene 1 token fijo (`initial_token` en `docker-compose
 iguales. Si los 3 nodos arrancan a la vez y eligen sus tokens solos, a veces dos eligen los mismos, y el ring queda
 con 2 nodos (`nodetool status` muestra 2): los logs dicen "have the same token ... Ignoring".
 
-**Nodo**: cada réplica guarda los datos en un log-structured merge tree:
+**LSM tree** (log-structured merge tree): los writes van a memoria y se bajan a disco en archivos ordenados que
+nunca se modifican; en background se combinan (merge). Writes rápidos (solo escrituras secuenciales) a cambio de
+reads que miran varios archivos. Lo usan Cassandra, RocksDB, LevelDB y HBase.
+
+**Nodo**: cada réplica guarda los datos en un LSM tree:
 
 ```mermaid
 flowchart LR
@@ -70,14 +74,10 @@ flowchart LR
 Como los SSTables son inmutables, un `DELETE` no puede borrar el dato: escribe un **tombstone**, una marca de
 borrado con su timestamp que tapa al dato.
 
-**Merkle tree** (hash tree): un árbol de hashes. Cada hoja es el hash de un pedazo de los datos y cada nodo
-interno es el hash de los hashes de sus hijos, hasta una raíz que resume todo. En Cassandra el árbol cubre un rango
-de tokens: cada hoja es un subrango y su hash se calcula sobre todas las particiones con token en ese subrango
-(keys, valores, timestamps y tombstones de cada celda). Dos réplicas con el mismo valor pero distinto timestamp
-dan hashes distintos. Si cambia un dato, cambia su hoja y todos los hashes hasta la raíz. Sirve para comparar dos copias grandes mandando poco: si las raíces son iguales,
-las copias son iguales; si no, se baja solo por las ramas con hashes distintos hasta encontrar los pedazos que
-difieren. Lo usan Dynamo, Cassandra y Riak para anti-entropy, Git (cada commit es la raíz de un árbol de hashes),
-BitTorrent para verificar pedazos, y las blockchains.
+**Merkle tree** (hash tree): cada hoja es el hash de un pedazo de los datos y cada nodo interno, el hash de sus
+hijos. En Cassandra cada hoja es un subrango de tokens y se hashean sus particiones (keys, valores, timestamps y
+tombstones). Sirve para comparar dos copias grandes mandando poco: si las raíces coinciden son iguales; si no, se
+baja solo por las ramas distintas. Lo usan Dynamo, Cassandra y Riak para anti-entropy, Git y BitTorrent.
 
 **Anti-entropy** (`nodetool repair`): el operador lo corre en un nodo, y para cada rango de tokens de ese nodo:
 
