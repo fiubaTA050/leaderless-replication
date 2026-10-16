@@ -18,12 +18,12 @@ un remove del mismo elemento son concurrentes, y eso las leyes no lo ven: el OR-
 mismas leyes y dan respuestas opuestas. Por eso cada archivo de `test/` tiene, después de las leyes, tests comunes
 de la semántica.
 
-| CRDT | Archivo | Updates | Add y remove concurrentes | ¿Se puede volver a agregar? |
-| --- | --- | --- | --- | --- |
-| G-Set | `src/gset.ts` | `add(e)` | no hay remove | - |
-| 2P-Set | `src/twopset.ts` | `add(e)`, `remove(e)` | gana remove | no |
-| OR-Set | `src/orset.ts` | `add(e, replicaId)`, `remove(e)` | gana add | sí |
-| RW-set | `src/rwset.ts` | `add(e, replicaId)`, `remove(e, replicaId)` | gana remove | sí |
+| CRDT | Updates | Add y remove concurrentes | ¿Se puede volver a agregar? |
+| --- | --- | --- | --- |
+| G-Set | `add(e)` | no hay remove | - |
+| 2P-Set | `add(e)`, `remove(e)` | gana remove | no |
+| OR-Set | `add(e, replicaId)`, `remove(e)` | gana add | sí |
+| RW-set | `add(e, replicaId)`, `remove(e, replicaId)` | gana remove | sí |
 
 Todos son clases que implementan `Crdt` (`join`, `value` y `equals`) con un `static bottom`; `value()` devuelve el
 `Set` de elementos presentes.
