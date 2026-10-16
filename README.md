@@ -86,6 +86,87 @@ B borra la posición 2 (la `c`). Si A aplica el delete de B tal cual, borra la `
 
 Las dos permiten editar offline y sincronizar después.
 
+### Problemas de los CRDTs
+
+Un CRDT converge sin coordinación, pero lo paga con metadata, con supuestos sobre la red y con semántica que la
+aplicación no siempre quiere.
+
+#### Tombstones y garbage collection
+
+Para que un remove funcione hay que recordar lo que se borró: los `removed` del 2P-Set, los tags en `removes` del
+OR-Set, los caracteres borrados de un CRDT de texto (Yjs y Automerge guardan cada carácter que alguna vez existió).
+La metadata crece con la historia, no con el valor: un set con 3 elementos puede tener millones de tags borrados.
+
+Borrar un tombstone es seguro recién cuando ninguna réplica puede mandar algo concurrente con el remove: todas las
+réplicas ya lo vieron, así que cualquier update futuro es posterior. Esa propiedad se llama **causal stability**
+(Baquero, Almeida, Shoker, 2014). Para saberlo, cada réplica tiene que conocer:
+
+- **quiénes son todas las réplicas** (membership), y
+- **qué vio cada una** (un version vector por réplica).
+
+Una réplica que no se conecta (un celular apagado hace meses) frena el garbage collection de todas: mientras no se
+sepa qué vio, cualquier tombstone podría hacer falta. Las opciones son esperar, sacarla del grupo (coordinación) o
+borrar igual después de un tiempo y aceptar resurrecciones: lo que hace Cassandra con `gc_grace_seconds` en
+`3-cassandra-tombstones`.
+
+#### IDs de réplicas y membership
+
+El G-Counter, los version vectors y los tags tienen una entrada por cada réplica que alguna vez escribió. Con
+réplicas efímeras (cada browser o cada celular es una réplica) crecen sin límite, y sacar la entrada de una réplica
+que se fue sin perder sus updates necesita acuerdo entre las demás. Un `replicaId` tampoco se puede reusar: dos
+réplicas con el mismo id generan el mismo dot para eventos distintos, y el G-Counter o el OR-Set dejan de
+converger. Los handoff counters de las referencias atacan este problema para counters.
+
+#### Supuestos sobre la red
+
+- **State-based** (los de este repo): toleran mensajes duplicados, perdidos y desordenados, porque `join` es
+  idempotente, conmutativo y asociativo. Pero cada sync manda el estado entero, metadata incluida.
+- **Op-based**: mandan solo la operación, pero necesitan que cada operación llegue exactamente una vez y en orden
+  causal a todas las réplicas (reliable causal broadcast). Esa capa también hay que construirla y guarda buffers de
+  operaciones hasta que llegan.
+- **Delta-state CRDTs** (Almeida, Shoker, Baquero, 2016): un update devuelve un delta chico que se combina con
+  `join` como un estado. Mensajes chicos y toleran la misma red que los state-based.
+
+#### Invariantes
+
+Un CRDT solo mantiene invariantes I-confluent (Parte 1): convergen, pero el estado combinado puede violar el
+invariante. Con un PN-Counter para `stock ≥ 0`, dos réplicas venden la última unidad y queda `-1`; con un OR-Set de
+usernames, dos réplicas agregan el mismo nombre. Los **bounded counters** (Balegas et al., 2015) reparten el stock
+en cuotas por réplica: cada una decrementa sin coordinar mientras le quede cuota, y para vender más le pide cuota a
+otra. Coordinan solo cuando se acaba la cuota local.
+
+Tampoco hay linearizability ni transactions: una réplica no ve los updates que todavía no recibió, así que un
+check-then-act (ej: "si no existe, crearlo") no es seguro.
+
+#### Converge, pero no siempre a lo que el usuario espera
+
+Strong eventual consistency garantiza que todas las réplicas lleguen al mismo estado, no que sea el que la
+aplicación quiere:
+
+- **Add wins o remove wins**: las leyes no eligen (OR-Set y Remove-wins set), lo elige la aplicación.
+- **Interleaving en texto**: dos usuarios escriben `Hola` y `Chau` a la vez en la misma posición; algunos
+  algoritmos (Logoot, LSEQ) mezclan los caracteres y pueden dar `HCohalau`
+  ([Kleppmann et al., 2019](https://martin.kleppmann.com/2019/03/25/papoc-interleaving-anomalies.html)).
+- **Mover en un árbol**: A mueve la carpeta `x` dentro de `y` y, a la vez, B mueve `y` dentro de `x`. Aplicar los
+  dos crea un ciclo. Google Drive y Dropbox tuvieron bugs con esto; un move correcto necesita un algoritmo propio
+  ([Kleppmann et al., 2021](https://martin.kleppmann.com/2021/10/07/crdt-tree-move-operation.html)).
+- **Composición**: un map de CRDTs es un CRDT, pero las reglas entre campos (ej: `fin ≥ inicio`) no se mantienen,
+  porque cada campo se combina por separado.
+
+#### Réplicas maliciosas
+
+Los algoritmos suponen que todas las réplicas siguen el protocolo. En peer-to-peer, una réplica que manda el mismo
+dot con contenidos distintos a peers distintos hace que no converjan nunca. Se resuelve identificando cada
+operación por el hash de su contenido y sus dependencias
+([Kleppmann, 2022](https://martin.kleppmann.com/2022/04/05/bft-crdt-papoc.html)).
+
+#### Performance
+
+Una implementación directa (un objeto con id por cada carácter) usa mucha memoria y es lenta: los primeros
+benchmarks de CRDTs de texto tardaban segundos en un paste. Las librerías actuales comprimen ids consecutivos
+(un paste es un solo bloque) y usan estructuras compactas
+([Gentle, 2021](https://josephg.com/blog/crdts-go-brrr/)).
+
 ### CRDTs en producción
 
 - **League of Legends (Riot Games)**: el chat guarda las listas de amigos y los datos de cada jugador como CRDTs en
@@ -110,6 +191,21 @@ CRDTs:
   tombstones (ORSWOT).
 - Almeida, Baquero. [Scalable Eventually Consistent Counters over Unreliable Networks](https://arxiv.org/abs/1307.3207).
   2013. Handoff counters.
+- Baquero, Almeida, Shoker. [Making Operation-Based CRDTs Operation-Based](https://hal.science/hal-01287738).
+  DAIS 2014. Causal stability y compactación del log de operaciones.
+- Almeida, Shoker, Baquero. [Delta State Replicated Data Types](https://arxiv.org/abs/1603.01529). 2016.
+  Delta-state CRDTs.
+- Balegas et al. [Extending Eventually Consistent Cloud Databases for Enforcing Numeric
+  Invariants](https://arxiv.org/abs/1503.09052). SRDS 2015. Bounded counter.
+- Kleppmann. [CRDTs: The Hard Parts](https://martin.kleppmann.com/2020/07/06/crdt-hard-parts-hydra.html). Hydra
+  2020. Charla sobre interleaving, move y performance.
+- Kleppmann, Gomes, Mulligan, Beresford. [Interleaving anomalies in collaborative text
+  editors](https://martin.kleppmann.com/2019/03/25/papoc-interleaving-anomalies.html). PaPoC 2019.
+- Kleppmann, Mulligan, Gomes, Beresford. [A highly-available move operation for replicated
+  trees](https://martin.kleppmann.com/2021/10/07/crdt-tree-move-operation.html). IEEE TPDS 2021.
+- Kleppmann. [Making CRDTs Byzantine Fault Tolerant](https://martin.kleppmann.com/2022/04/05/bft-crdt-papoc.html).
+  PaPoC 2022.
+- Gentle. [5000x faster CRDTs: An Adventure in Optimization](https://josephg.com/blog/crdts-go-brrr/). 2021.
 - [crdt.tech](https://crdt.tech/): papers, implementaciones y charlas sobre CRDTs.
 - Kleppmann, Wiggins, van Hardenberg, McGranaghan. [Local-first software: You own your data, in spite of the
   cloud](https://www.inkandswitch.com/essay/local-first/). Onward! 2019. Aplicaciones que funcionan offline y
