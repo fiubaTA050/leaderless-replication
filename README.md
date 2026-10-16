@@ -272,6 +272,8 @@ Bases leaderless:
   Systems](https://www.vldb.org/pvldb/vol8/p185-bailis.pdf). PVLDB 8(3), 2014.
 - Kleppmann. [Designing Data-Intensive Applications](https://dataintensive.net/). Capítulo 5: replicación
   leaderless.
+- Twitter. [Snowflake](https://github.com/twitter-archive/snowflake/tree/snowflake-2010). 2010. IDs únicos de 64 bits
+  sin coordinar: timestamp + id de máquina + secuencia.
 
 Cassandra:
 
