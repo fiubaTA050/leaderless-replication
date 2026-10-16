@@ -22,12 +22,12 @@ docker network inspect cassandra_default --format '{{range .Containers}}{{.Name}
 # cqlsh contra un nodo (ese nodo es el coordinator)
 docker exec -it cassandra-node1-1 cqlsh
 
-# UI web (Reaper): agregar el cluster una vez y abrir http://localhost:8080/webui
-curl -X POST "localhost:8080/cluster?seedHost=node1&jmxPort=7199"
+# UI web (DbGate) para ver los datos: http://localhost:3000
 ```
 
-Reaper muestra los nodos agrupados por datacenter y rack (en rojo los caídos, según gossip) y permite correr
-repairs (anti-entropy) desde la UI.
+DbGate muestra los keyspaces, las tablas y sus filas, y tiene una consola CQL (ej: `SELECT k, v, WRITETIME(v) FROM
+demo.kv`). Lee a través de `node1` como coordinator: muestra el valor ya reconciliado, no lo que guarda cada réplica,
+y si `node1` está caído no se conecta.
 
 ### Branch `2-cassandra-lww`: last write wins por columna
 

@@ -13,9 +13,6 @@ x-cassandra: &cassandra
     # Heap chico para que entren 3 nodos en una notebook
     MAX_HEAP_SIZE: 512M
     HEAP_NEWSIZE: 128M
-    # JMX accesible desde otros containers (para Reaper), sin autenticación: solo para desarrollo local. La
-    # autenticación se apaga en JVM_EXTRA_OPTS de cada nodo, que va después de las opciones de cassandra-env.sh
-    LOCAL_JMX: "no"
   healthcheck:
     test: cqlsh -e "DESCRIBE KEYSPACES" > /dev/null
     interval: 5s
@@ -30,7 +27,7 @@ services:
     environment:
       <<: *cassandra-env
       # Posición del nodo en el ring (tokens de Murmur3 repartidos en 3 partes iguales)
-      JVM_EXTRA_OPTS: -Dcassandra.initial_token=-9223372036854775808 -Dcom.sun.management.jmxremote.authenticate=false
+      JVM_EXTRA_OPTS: -Dcassandra.initial_token=-9223372036854775808
     volumes:
       - ./cql:/cql:ro
       - node1-data:/var/lib/cassandra
@@ -40,7 +37,7 @@ services:
     environment:
       <<: *cassandra-env
       # Posición del nodo en el ring (tokens de Murmur3 repartidos en 3 partes iguales)
-      JVM_EXTRA_OPTS: -Dcassandra.initial_token=-3074457345618258603 -Dcom.sun.management.jmxremote.authenticate=false
+      JVM_EXTRA_OPTS: -Dcassandra.initial_token=-3074457345618258603
     volumes:
       - ./cql:/cql:ro
       - node2-data:/var/lib/cassandra
@@ -50,7 +47,7 @@ services:
     environment:
       <<: *cassandra-env
       # Posición del nodo en el ring (tokens de Murmur3 repartidos en 3 partes iguales)
-      JVM_EXTRA_OPTS: -Dcassandra.initial_token=3074457345618258602 -Dcom.sun.management.jmxremote.authenticate=false
+      JVM_EXTRA_OPTS: -Dcassandra.initial_token=3074457345618258602
     volumes:
       - ./cql:/cql:ro
       - node3-data:/var/lib/cassandra
@@ -67,15 +64,19 @@ services:
     profiles:
       - client
 
-  # UI web del cluster: http://localhost:8080/webui. Muestra los nodos (up/down) y permite correr repairs.
-  # Guarda todo en memoria: después de reiniciarlo hay que volver a agregar el cluster (seed node1)
-  reaper:
-    image: thelastpickle/cassandra-reaper:5.0.1
+  # UI web para ver y editar los datos: http://localhost:3000. Lee a través de node1 como coordinator (no muestra
+  # lo que tiene cada réplica por separado)
+  dbgate:
+    image: dbgate/dbgate:7.3.1-alpine
     environment:
-      REAPER_STORAGE_TYPE: memory
-      REAPER_AUTH_ENABLED: "false"
+      CONNECTIONS: cassandra
+      LABEL_cassandra: leaderless
+      ENGINE_cassandra: cassandra@dbgate-plugin-cassandra
+      SERVER_cassandra: node1
+      PORT_cassandra: 9042
+      LOCAL_DATA_CENTER_cassandra: dc1
     ports:
-      - "8080:8080"
+      - "3000:3000"
 
 # Los volúmenes sobreviven a `docker rm -f` y se borran con `down -v`
 volumes:
