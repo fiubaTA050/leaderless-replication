@@ -14,7 +14,7 @@ npm test
 ```
 
 Todos pasan `testCrdtLaws`. Lo que cambia entre ellos es la semántica cuando un add y
-un remove del mismo elemento son concurrentes, y eso las leyes no lo ven: el OR-Set y el Remove-wins set cumplen las
+un remove del mismo elemento son concurrentes, y eso las leyes no lo ven: el OR-Set y el RW-set cumplen las
 mismas leyes y dan respuestas opuestas. Por eso cada archivo de `test/` tiene, después de las leyes, tests comunes
 de la semántica.
 
@@ -23,7 +23,7 @@ de la semántica.
 | G-Set | `src/gset.ts` | `add(e)` | no hay remove | - |
 | 2P-Set | `src/twopset.ts` | `add(e)`, `remove(e)` | gana remove | no |
 | OR-Set | `src/orset.ts` | `add(e, replicaId)`, `remove(e)` | gana add | sí |
-| Remove-wins set | `src/rwset.ts` | `add(e, replicaId)`, `remove(e, replicaId)` | gana remove | sí |
+| RW-set | `src/rwset.ts` | `add(e, replicaId)`, `remove(e, replicaId)` | gana remove | sí |
 
 Todos son clases que implementan `Crdt` (`join`, `value` y `equals`) con un `static bottom`; `value()` devuelve el
 `Set` de elementos presentes.
@@ -58,7 +58,7 @@ vectors).
 Un tag `(replicaId, n)` es un **dot**, como en los dotted version vectors de Riak: identifica un evento, y un remove
 cancela exactamente los dots que observó. Por eso los tags no se pueden repetir nunca.
 
-#### Remove-wins set
+#### RW-set (remove wins)
 
 Simétrico al OR-Set: el remove también crea un tag.
 
@@ -69,7 +69,7 @@ Simétrico al OR-Set: el remove también crea un tag.
 Con add y remove concurrentes, ninguno canceló el tag del otro: queda un tag de remove vivo y gana remove. En orden
 causal funciona como un set normal. Sirve cuando el remove es lo seguro (ej: revocar un permiso).
 
-![Remove-wins set: Node A agrega x e y y propaga; después Node A borra x mientras Node B agrega x. Al propagar, los dos nodos quedan con {y}: gana remove, porque el add no canceló el tag nodeA:2.](img/rwset.svg)
+![RW-set: Node A agrega x e y y propaga; después Node A borra x mientras Node B agrega x. Al propagar, los dos nodos quedan con {y}: gana remove, porque el add no canceló el tag nodeA:2.](img/rwset.svg)
 
 ### Edición de texto: Operational Transformation y CRDTs
 
@@ -143,7 +143,7 @@ check-then-act (ej: "si no existe, crearlo") no es seguro.
 Strong eventual consistency garantiza que todas las réplicas lleguen al mismo estado, no que sea el que la
 aplicación quiere:
 
-- **Add wins o remove wins**: las leyes no eligen (OR-Set y Remove-wins set), lo elige la aplicación.
+- **Add wins o remove wins**: las leyes no eligen (OR-Set y RW-set), lo elige la aplicación.
 - **Interleaving en texto**: dos usuarios escriben `Hola` y `Chau` a la vez en la misma posición; algunos
   algoritmos (Logoot, LSEQ) mezclan los caracteres y pueden dar `HCohalau`
   ([Kleppmann et al., 2019](https://martin.kleppmann.com/2019/03/25/papoc-interleaving-anomalies.html)).
