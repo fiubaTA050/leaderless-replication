@@ -48,6 +48,15 @@ El **least upper bound** (join, `⊔`) de `x` e `y` es el menor elemento que es 
 `{a} ⊔ {b} = {a,b}`, `{a,b} ⊔ {b,c} = {a,b,c}`. Un **join-semilattice** es un orden parcial donde todo par tiene
 join. Abajo de todo está **bottom** (`{}`): el estado inicial, antes de cualquier update.
 
+Por qué el merge de dos réplicas tiene que ser el least upper bound:
+
+- **Upper bound** (`≥` que los dos): el resultado incluye todo lo que tenía cada réplica, así que no se pierde
+  ningún update. `{a,b,c}` también es upper bound de `{a}` y `{b}`.
+- **Least** (el menor de los upper bounds): no agrega nada que no estuviera en alguna réplica. `{a,b,c}` inventaría
+  una `c` que nadie escribió; `{a,b}` no.
+- **Todo par tiene uno**: dos réplicas, con cualquier estado, siempre se pueden combinar, y el resultado es único:
+  todas las réplicas que vieron los mismos updates llegan al mismo estado.
+
 Un join-semilattice queda completamente definido por:
 
 | Componente | Qué es | En el ejemplo |
