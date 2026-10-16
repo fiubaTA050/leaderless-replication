@@ -87,7 +87,15 @@ El cliente tiene que trabajar dentro de estos límites. Ejemplos:
   incrementos concurrentes suman los dos.
 - Resolución de conflictos propia: la base guarda las versiones concurrentes y el cliente las combina con reglas de
   la aplicación.
-- IDs generados sin coordinar (UUID, `timeuuid`) en vez de secuencias.
+- IDs generados sin coordinar (UUID, `timeuuid`) en vez de secuencias. Hay dos formas de generarlos:
+  - **Únicos por construcción**: `replicaId` + un contador local de esa réplica (como los dots de Riak o los
+    `timeuuid` de Cassandra, que incluyen un id de nodo y un clock sequence). Dos réplicas nunca generan el mismo,
+    siempre que no se repita el `replicaId`.
+  - **Únicos con alta probabilidad**: random (UUIDv4, 122 bits random) o timestamp + random (UUIDv7: 48 bits de
+    timestamp en ms y 74 random; ULID: 48 y 80). Una colisión es posible, pero hay que generar del orden de 2^61
+    UUIDv4 para tener 50% de chance de una. En la práctica las colisiones vienen de un random malo: un generador sin
+    seed, una VM clonada o un proceso forkeado que repiten la secuencia. Y si el cliente elige el id, puede repetir
+    uno a propósito.
 - Para lo que sí necesita coordinación, pagarla solo ahí: lightweight transactions de Cassandra (`IF NOT EXISTS`,
   Paxos), o mover esa parte a una base con leader.
 - Aceptar la violación y compensar después (ej: vender de más y cancelar una compra).
@@ -109,7 +117,7 @@ Depende del invariante **y** de la operación:
 | Invariante | Operación | ¿Sin coordinación? |
 | --- | --- | --- |
 | `NOT NULL`, `campo = constante` | cualquiera | sí |
-| ID único generado por el sistema (UUID) | insert | sí |
+| ID único generado por el sistema (UUID) | insert | sí (con alta probabilidad si es random) |
 | ID único elegido por el usuario (`PRIMARY KEY`, `UNIQUE`) | insert | no |
 | `AUTO_INCREMENT` sin huecos | insert | no |
 | Foreign key | insert | sí |
