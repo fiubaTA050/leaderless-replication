@@ -29,6 +29,16 @@ DbGate muestra los keyspaces, las tablas y sus filas, y tiene una consola CQL (e
 demo.kv`). Lee a través de `node1` como coordinator: muestra el valor ya reconciliado, no lo que guarda cada réplica,
 y si `node1` está caído no se conecta.
 
+`nodetool status` muestra dos letras por nodo, según lo que ese nodo (acá `node1`) sabe por gossip:
+
+- **Status**: `U` (up) o `D` (down). Es la opinión del failure detector de `node1`, no un chequeo en el momento: un
+  nodo recién caído sigue apareciendo `U` hasta que gossip lo detecta (~10-20s), y otro nodo puede verlo distinto.
+- **State**: `N` (normal, atiende su rango del ring), `J` (joining, entrando al cluster), `L` (leaving, saliendo) o
+  `M` (moving, cambiando de token).
+
+`UN` es un nodo funcionando normalmente; `DN`, un nodo que sigue siendo dueño de su rango pero que gossip ve caído:
+las réplicas que le tocan no responden, y los writes para él se guardan como hints.
+
 ### Branch `1-cassandra-cluster`: coordinator, consistency levels, hints y read repair
 
 ```bash
