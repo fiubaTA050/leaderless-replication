@@ -4,7 +4,7 @@ services:
     image: basho/riak-kv
     platform: linux/amd64
     ports:
-      # HTTP API y Riak Explorer, la UI web (http://localhost:8098/admin)
+      # HTTP API
       - "8098:8098"
     healthcheck:
       # Riak escucha en la IP del container, no en localhost. /ping responde antes de que KV funcione:
@@ -16,6 +16,16 @@ services:
       start_period: 10s
     volumes:
       - riak-data:/var/lib/riak
+
+  # UI web para ver los datos: http://localhost:8080. Página estática (ui/index.html) que lee la HTTP API de Riak a
+  # través de nginx
+  ui:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./ui/index.html:/usr/share/nginx/html/index.html:ro
+      - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
 # Los volúmenes sobreviven a `docker rm -f` y se borran con `down -v`
 volumes:

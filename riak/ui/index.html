@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Riak data</title>
+  <style>
+    :root { --bg: #f6f8fa; --panel: #fff; --ink: #1f2328; --muted: #57606a; --line: #d0d7de; --accent: #0969da; --warn: #9a6700; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px ui-sans-serif, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--ink); background: var(--bg); }
+    header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    h1 { font-size: 16px; margin: 0 8px 0 0; }
+    input, button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+    button { cursor: pointer; }
+    .note { color: var(--muted); font-size: 12px; }
+    main { display: grid; grid-template-columns: 200px 240px 1fr; gap: 12px; padding: 12px 16px; }
+    @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-height: 120px; overflow: auto; }
+    h2 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 4px 4px 8px; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { padding: 4px 6px; border-radius: 4px; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    li:hover { background: var(--bg); }
+    li.selected { background: var(--accent); color: #fff; }
+    .empty { color: var(--muted); cursor: default; font-family: inherit; }
+    .status { font-weight: bold; margin: 4px 4px 12px; }
+    .status.conflict { color: var(--warn); }
+    .sibling { border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    .sibling pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; font-size: 12px; }
+    dt { color: var(--muted); }
+    dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Riak data</h1>
+    <label>Bucket type <input id="type" list="types" value="siblings" size="12"></label>
+    <datalist id="types"><option value="default"><option value="siblings"></datalist>
+    <button id="refresh">Actualizar</button>
+    <span class="note">Riak no tiene API para listar bucket types. Listar buckets y keys recorre todas las keys: solo para desarrollo.</span>
+  </header>
+  <main>
+    <section><h2>Buckets</h2><ul id="buckets"></ul></section>
+    <section><h2>Keys</h2><ul id="keys"></ul></section>
+    <section><h2>Objeto</h2><div id="object"></div></section>
+  </main>
+  <script>
+    const state = { bucket: null, key: null };
+    const $ = (id) => document.getElementById(id);
+    const typePath = () => `/riak/types/${encodeURIComponent($('type').value)}`;
+    const bucketPath = () => `${typePath()}/buckets/${encodeURIComponent(state.bucket)}`;
+
+    async function getJson(url) {
+      const res = await fetch(url);
+      if (res.ok) {
+        return res.json();
+      } else {
+        throw new Error(`${res.status} ${await res.text()}`);
+      }
+    }
+
+    // Lista clickeable; marca el elemento seleccionado
+    function renderList(ul, items, selected, onClick) {
+      ul.replaceChildren(...(items.length === 0
+        ? [Object.assign(document.createElement('li'), { className: 'empty', textContent: '(vacío)' })]
+        : items.toSorted().map((item) => {
+          const li = document.createElement('li');
+          li.textContent = item;
+          li.className = item === selected ? 'selected' : '';
+          li.onclick = () => onClick(item);
+          return li;
+        })));
+      return ul;
+    }
+
+    function renderError(el, error) {
+      el.replaceChildren(Object.assign(document.createElement('div'), { className: 'note', textContent: String(error) }));
+      return el;
+    }
+
+    async function loadBuckets() {
+      try {
+        const { buckets } = await getJson(`${typePath()}/buckets?buckets=true`);
+        if (!buckets.includes(state.bucket)) {
+          state.bucket = null;
+          state.key = null;
+        }
+        renderList($('buckets'), buckets, state.bucket, selectBucket);
+        return await loadKeys();
+      } catch (error) {
+        return renderError($('buckets'), error);
+      }
+    }
+
+    function selectBucket(bucket) {
+      state.bucket = bucket;
+      state.key = null;
+      return loadBuckets();
+    }
+
+    async function loadKeys() {
+      if (state.bucket === null) {
+        $('keys').replaceChildren();
+        return loadObject();
+      } else {
+        try {
+          const { keys } = await getJson(`${bucketPath()}/keys?keys=true`);
+          if (!keys.includes(state.key)) {
+            state.key = null;
+          }
+          renderList($('keys'), keys, state.key, selectKey);
+          return await loadObject();
+        } catch (error) {
+          return renderError($('keys'), error);
+        }
+      }
+    }
+
+    function selectKey(key) {
+      state.key = key;
+      return loadKeys();
+    }
+
+    // Un 300 con multipart/mixed trae un sibling por parte: headers, línea vacía y el valor
+    function parseMultipart(body, contentType) {
+      const boundary = contentType.match(/boundary=([^;]+)/)[1];
+      return body.split(`--${boundary}`).slice(1, -1).map((part) => {
+        const [head, ...rest] = part.replace(/^\r\n/, '').split('\r\n\r\n');
+        const headers = new Headers(head.split('\r\n').filter((line) => line.includes(':')).map((line) => {
+          const i = line.indexOf(':');
+          return [line.slice(0, i).trim(), line.slice(i + 1).trim()];
+        }));
+        return { headers, value: rest.join('\r\n\r\n').replace(/\r\n$/, '') };
+      });
+    }
+
+    function siblingBox(sibling, title) {
+      const box = Object.assign(document.createElement('div'), { className: 'sibling' });
+      const dl = document.createElement('dl');
+      const fields = [
+        ['', title],
+        ['Last-Modified', sibling.headers.get('Last-Modified')],
+        ['Etag', sibling.headers.get('Etag')],
+        ['Content-Type', sibling.headers.get('Content-Type')],
+        ['Borrado', sibling.headers.get('X-Riak-Deleted') === 'true' ? 'sí (tombstone)' : null],
+      ];
+      for (const [name, value] of fields.filter(([, value]) => value)) {
+        dl.append(Object.assign(document.createElement('dt'), { textContent: name }),
+          Object.assign(document.createElement('dd'), { textContent: value }));
+      }
+      box.append(dl, Object.assign(document.createElement('pre'), { textContent: sibling.value }));
+      return box;
+    }
+
+    async function loadObject() {
+      const el = $('object');
+      if (state.key === null) {
+        return el.replaceChildren(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Elegí una key' }));
+      } else {
+        try {
+          // Con siblings Riak responde 300 con la lista de vtags; con Accept multipart/mixed devuelve los valores (sin
+          // siblings, ese Accept da 406)
+          const url = `${bucketPath()}/keys/${encodeURIComponent(state.key)}`;
+          const first = await fetch(url);
+          const res = first.status === 300 ? await fetch(url, { headers: { Accept: 'multipart/mixed' } }) : first;
+          const body = await res.text();
+          const contentType = res.headers.get('Content-Type') ?? '';
+          const siblings = contentType.startsWith('multipart/mixed')
+            ? parseMultipart(body, contentType)
+            : [{ headers: res.headers, value: body }];
+          const status = Object.assign(document.createElement('div'), {
+            className: siblings.length > 1 ? 'status conflict' : 'status',
+            textContent: siblings.length > 1 ? `${res.status}: ${siblings.length} siblings (conflicto sin resolver)` : `${res.status}: un solo valor`,
+          });
+          const vclock = document.createElement('dl');
+          vclock.append(Object.assign(document.createElement('dt'), { textContent: 'X-Riak-Vclock' }),
+            Object.assign(document.createElement('dd'), { textContent: res.headers.get('X-Riak-Vclock') ?? '-' }));
+          el.replaceChildren(status, vclock, document.createElement('br'),
+            ...siblings.map((sibling, i) => siblingBox(sibling, siblings.length > 1 ? `sibling ${i + 1}` : 'valor')));
+          return el;
+        } catch (error) {
+          return renderError(el, error);
+        }
+      }
+    }
+
+    $('refresh').onclick = () => loadBuckets();
+    $('type').onchange = () => selectBucket(null);
+    loadBuckets();
+  </script>
+</body>
+</html>
