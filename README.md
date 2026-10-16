@@ -46,7 +46,7 @@ está si tiene algún tag de add que no está en `removes`.
 
 Con add y remove concurrentes, el add creó un tag que el remove no vio, así que el elemento queda: gana add.
 
-![OR-Set, gana add: Node B recibe Xbox de Node A; después, a la vez, Node A borra Xbox y Node B lo agrega. El remove de Node A solo observó nodeA:1, así que nodeB:1 sigue vivo y los dos nodos quedan con {Xbox}.](img/orset-add-wins.svg)
+![OR-Set, gana add: Node A agrega Xbox y Node B lo recibe; los dos lo borran; después Node A vuelve a agregar Xbox (nodeA:2), concurrente con el remove de Node B, mientras Node B agrega PlayStation. El remove de Node B solo canceló nodeA:1, así que nodeA:2 sigue vivo y los dos nodos quedan con {Xbox, PlayStation}.](img/orset-add-wins.svg)
 
 Se puede volver a agregar: cada add crea un tag nuevo, que ningún remove anterior observó.
 
@@ -69,7 +69,9 @@ Simétrico al OR-Set: el remove también crea un tag.
 Con add y remove concurrentes, ninguno canceló el tag del otro: queda un tag de remove vivo y gana remove. En orden
 causal funciona como un set normal. Sirve cuando el remove es lo seguro (ej: revocar un permiso).
 
-![RW-set: Node A agrega x e y y propaga; después Node A borra x mientras Node B agrega x. Al propagar, los dos nodos quedan con {y}: gana remove, porque el add no canceló el tag nodeA:2.](img/rwset.svg)
+Con la misma secuencia que el ejemplo del OR-Set, el resultado es el opuesto:
+
+![RW-set, gana remove: la misma secuencia que el OR-Set. El add de Node A (nodeA:3) canceló el remove que vio (nodeA:2), pero no el de Node B (nodeB:1), que es concurrente: queda un tag de remove vivo y los dos nodos quedan con {PlayStation}.](img/rwset.svg)
 
 ### Edición de texto: Operational Transformation y CRDTs
 
