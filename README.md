@@ -87,15 +87,23 @@ El cliente tiene que trabajar dentro de estos límites. Ejemplos:
   incrementos concurrentes suman los dos.
 - Resolución de conflictos propia: la base guarda las versiones concurrentes y el cliente las combina con reglas de
   la aplicación.
-- IDs generados sin coordinar (UUID, `timeuuid`) en vez de secuencias. Hay dos formas de generarlos:
-  - **Únicos por construcción**: `replicaId` + un contador local de esa réplica (como los dots de Riak o los
-    `timeuuid` de Cassandra, que incluyen un id de nodo y un clock sequence). Dos réplicas nunca generan el mismo,
-    siempre que no se repita el `replicaId`.
-  - **Únicos con alta probabilidad**: random (UUIDv4, 122 bits random) o timestamp + random (UUIDv7: 48 bits de
-    timestamp en ms y 74 random; ULID: 48 y 80). Una colisión es posible, pero hay que generar del orden de 2^61
-    UUIDv4 para tener 50% de chance de una. En la práctica las colisiones vienen de un random malo: un generador sin
-    seed, una VM clonada o un proceso forkeado que repiten la secuencia. Y si el cliente elige el id, puede repetir
-    uno a propósito.
+- IDs generados sin coordinar (UUID, `timeuuid`, Snowflake) en vez de secuencias. Hay dos formas de generarlos:
+  - **Únicos por construcción, generados en el servidor**: id del generador + un contador local (como los dots de
+    Riak o los `timeuuid` de Cassandra, que incluyen un id de nodo y un clock sequence). Dos generadores nunca
+    generan el mismo, siempre que no se repita el id del generador. Asignar esos ids sí necesita coordinación, pero
+    una sola vez por generador y no por cada id. Por eso son de servidores: hay pocos, son confiables y se les
+    puede asignar un id; a millones de clientes no.
+    - **Snowflake** ([Twitter, 2010](https://github.com/twitter-archive/snowflake/tree/snowflake-2010)): 64 bits
+      = 1 de signo + 41 de timestamp en ms (desde un epoch propio) + 10 de id de máquina + 12 de secuencia, hasta
+      4096 ids por ms por máquina. Entra en un `bigint` y se ordena por tiempo. El id de máquina se configura en
+      cada servidor. Si el reloj vuelve atrás podría repetir ids, así que el generador se niega a generar hasta
+      que el reloj pase el timestamp del último id.
+  - **Únicos con alta probabilidad, se pueden generar en el cliente**: random (UUIDv4, 122 bits random) o
+    timestamp + random (UUIDv7: 48 bits de timestamp en ms y 74 random; ULID: 48 y 80). No necesitan un id
+    asignado, así que los puede generar cualquiera, incluso un cliente offline. Una colisión es posible, pero hay
+    que generar del orden de 2^61 UUIDv4 para tener 50% de chance de una. En la práctica las colisiones vienen de
+    un random malo: un generador sin seed, una VM clonada o un proceso forkeado que repiten la secuencia. Y si el
+    cliente elige el id, puede repetir uno a propósito.
 - Para lo que sí necesita coordinación, pagarla solo ahí: lightweight transactions de Cassandra (`IF NOT EXISTS`,
   Paxos), o mover esa parte a una base con leader.
 
