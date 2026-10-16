@@ -16,7 +16,7 @@
 | 3. Riak | [`4-riak-siblings`](https://github.com/fiubaTA050/leaderless-replication/tree/4-riak-siblings) | siblings y dotted version vectors |
 | 4. CRDTs | [`5-crdt-lww`](https://github.com/fiubaTA050/leaderless-replication/tree/5-crdt-lww) | join-semilattice, LWW-Register |
 |  | [`6-crdt-counters`](https://github.com/fiubaTA050/leaderless-replication/tree/6-crdt-counters) | law testing, G-Counter, PN-Counter |
-|  | [`7-crdt-sets`](https://github.com/fiubaTA050/leaderless-replication/tree/7-crdt-sets) | G-Set, 2P-Set, OR-Set, Remove-wins set, LWW-Register causal |
+|  | [`7-crdt-sets`](https://github.com/fiubaTA050/leaderless-replication/tree/7-crdt-sets) | G-Set, 2P-Set, OR-Set, Remove-wins set |
 
 Cada branch agrega su sección a este README.
 
