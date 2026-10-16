@@ -70,6 +70,13 @@ flowchart LR
 Como los SSTables son inmutables, un `DELETE` no puede borrar el dato: escribe un **tombstone**, una marca de
 borrado con su timestamp que tapa al dato.
 
+**Merkle tree** (hash tree): un árbol de hashes. Cada hoja es el hash de un pedazo de los datos y cada nodo
+interno es el hash de los hashes de sus hijos, hasta una raíz que resume todo. Si cambia un dato, cambia su hoja y
+todos los hashes hasta la raíz. Sirve para comparar dos copias grandes mandando poco: si las raíces son iguales,
+las copias son iguales; si no, se baja solo por las ramas con hashes distintos hasta encontrar los pedazos que
+difieren. Lo usan Dynamo, Cassandra y Riak para anti-entropy, Git (cada commit es la raíz de un árbol de hashes),
+BitTorrent para verificar pedazos, y las blockchains.
+
 **Anti-entropy** (`nodetool repair`): el operador lo corre en un nodo, y para cada rango de tokens de ese nodo:
 
 1. Le pide a cada réplica del rango un **Merkle tree**: la réplica lee todos sus SSTables del rango (validation
