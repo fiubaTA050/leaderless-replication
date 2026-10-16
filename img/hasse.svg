@@ -1,35 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="480" height="350" viewBox="0 0 480 350" role="img" aria-label="Diagrama de Hasse de los subconjuntos de {a,b,c} ordenados por inclusión">
-  <rect width="480" height="350" rx="12" fill="#ffffff"/>
-  <g stroke="#57606a" stroke-width="1.5">
-    <line x1="240" y1="299" x2="100" y2="241"/>
-    <line x1="240" y1="299" x2="240" y2="241"/>
-    <line x1="240" y1="299" x2="380" y2="241"/>
-    <line x1="100" y1="209" x2="100" y2="151"/>
-    <line x1="100" y1="209" x2="240" y2="151"/>
-    <line x1="240" y1="209" x2="100" y2="151"/>
-    <line x1="240" y1="209" x2="380" y2="151"/>
-    <line x1="380" y1="209" x2="240" y2="151"/>
-    <line x1="380" y1="209" x2="380" y2="151"/>
-    <line x1="100" y1="119" x2="240" y2="61"/>
-    <line x1="240" y1="119" x2="240" y2="61"/>
-    <line x1="380" y1="119" x2="240" y2="61"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="452" height="413" viewBox="0 0 452 413" role="img" aria-label="Diagrama de Hasse de los subconjuntos de {a,b,c} ordenados por inclusión. Resaltado: el join de {a} y {b} es {a,b}, el primero al que se llega subiendo desde los dos.">
+  <rect width="452" height="413" fill="#f4f2ec"/>
+  <g stroke-linecap="round">
+    <line x1="229" y1="64.5" x2="97" y2="128.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="229" y1="64.5" x2="229" y2="128.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="229" y1="64.5" x2="361" y2="128.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="229" y1="169.5" x2="97" y2="234.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="229" y1="169.5" x2="361" y2="234.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="361" y1="169.5" x2="229" y2="234.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="361" y1="169.5" x2="361" y2="234.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="97" y1="275.5" x2="229" y2="339.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="229" y1="275.5" x2="229" y2="339.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="361" y1="275.5" x2="229" y2="339.5" stroke="#8c929c" stroke-width="1"/>
+    <line x1="97" y1="169.5" x2="97" y2="234.5" stroke="#a9572a" stroke-width="2.5"/>
+    <line x1="97" y1="169.5" x2="229" y2="234.5" stroke="#a9572a" stroke-width="2.5"/>
   </g>
-  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#1f2328" text-anchor="middle" dominant-baseline="central">
-    <rect x="202" y="29" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="240" y="45">{a,b,c}</text>
-    <rect x="62" y="119" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="100" y="135">{a,b}</text>
-    <rect x="202" y="119" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="240" y="135">{a,c}</text>
-    <rect x="342" y="119" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="380" y="135">{b,c}</text>
-    <rect x="62" y="209" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="100" y="225">{a}</text>
-    <rect x="202" y="209" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="240" y="225">{b}</text>
-    <rect x="342" y="209" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="380" y="225">{c}</text>
-    <rect x="202" y="299" width="76" height="32" rx="6" fill="#f6f8fa" stroke="#8c959f"/>
-    <text x="240" y="315">{}</text>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" text-anchor="middle">
+    <rect x="176.5" y="23.5" width="105" height="41" rx="20.5" fill="#fffdf8" stroke="#1f2328" stroke-width="1"/>
+    <text x="229" y="50" fill="#1f2328">{a,b,c}</text>
+    <rect x="44.5" y="128.5" width="105" height="41" rx="20.5" fill="#3a5f99" stroke="#3a5f99" stroke-width="1"/>
+    <text x="97" y="155" fill="#ffffff">{a,b}</text>
+    <rect x="176.5" y="128.5" width="105" height="41" rx="20.5" fill="#fffdf8" stroke="#1f2328" stroke-width="1"/>
+    <text x="229" y="155" fill="#1f2328">{a,c}</text>
+    <rect x="308.5" y="128.5" width="105" height="41" rx="20.5" fill="#fffdf8" stroke="#1f2328" stroke-width="1"/>
+    <text x="361" y="155" fill="#1f2328">{b,c}</text>
+    <rect x="44.5" y="234.5" width="105" height="41" rx="20.5" fill="#fffdf8" stroke="#a9572a" stroke-width="1"/>
+    <text x="97" y="261" fill="#1f2328">{a}</text>
+    <rect x="176.5" y="234.5" width="105" height="41" rx="20.5" fill="#fffdf8" stroke="#a9572a" stroke-width="1"/>
+    <text x="229" y="261" fill="#1f2328">{b}</text>
+    <rect x="308.5" y="234.5" width="105" height="41" rx="20.5" fill="#fffdf8" stroke="#1f2328" stroke-width="1"/>
+    <text x="361" y="261" fill="#1f2328">{c}</text>
+    <rect x="176.5" y="339.5" width="105" height="41" rx="20.5" fill="#fffdf8" stroke="#1f2328" stroke-width="1"/>
+    <text x="229" y="366" fill="#1f2328">{} ⊥</text>
   </g>
 </svg>
