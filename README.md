@@ -181,6 +181,41 @@ benchmarks de CRDTs de texto tardaban segundos en un paste. Las librerías actua
   por separado, y gana el último valor que recibe el servidor.
   [How Figma's multiplayer technology works](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/)
 
+#### Redis Active-Active: un CRDT por tipo de dato
+
+Los comandos son los de Redis, pero cada tipo es un CRDT distinto y el merge depende del comando, no solo del tipo
+([Data types for Active-Active databases](https://redis.io/docs/latest/operate/rs/databases/active-active/develop/data-types/)):
+
+| Tipo | CRDT | Updates concurrentes | Delete concurrente con un write |
+| --- | --- | --- | --- |
+| String (`SET`), bitfield | LWW-Register | gana el timestamp mayor (wall clock del OS) | - |
+| String como counter (`INCR`, `INCRBY`) | PN-Counter | se suman los incrementos de todas las regiones | - |
+| Set | OR-Set | unión | gana add: `SREM` solo borra lo que observó |
+| Hash | OR-Set de fields; cada valor es un LWW-Register o un counter (`HINCRBY`) | unión de fields | gana add/update |
+| Sorted set (y Geo) | OR-Set de miembros; el score es un counter | `ZINCRBY` se suma; `ZADD` del mismo miembro: LWW | gana add/update: `ZREM` resta el score que observó |
+| List | secuencia, como los CRDTs de texto | se insertan los dos, en un orden arbitrario pero igual en todas las réplicas | `DEL` solo borra lo observado |
+| Stream | un log por región, unidos al leer | se agregan los dos (con ids distintos en modo `strict`) | entries: observed remove; consumer groups: gana delete |
+| HyperLogLog | merge de registros (máximo) | unión | gana delete |
+| JSON | basado en el JSON CRDT de Kleppmann y Beresford | objetos y arrays se combinan; mismo field: gana la réplica con menor id | depende: crear gana a borrar, borrar gana a update |
+| TTL (`EXPIRE`) | max-register | gana el TTL más largo; `PERSIST` gana a todos | - |
+
+Detalles que conectan con lo que vimos:
+
+- **Delete observed-remove**: un `DEL` de una key borra solo los elementos que esa réplica vio. Con un `SADD`
+  concurrente, la key sigue existiendo con el elemento nuevo (la regla del OR-Set de este branch).
+- **Score como counter**: `ZADD Z 4.1 x`, sync, y después a la vez `ZREM Z x` en una región y `ZINCRBY Z 2 x` en
+  otra. Resultado: `x` con score `2.0`. El `ZREM` resta los `4.1` que observó, el `ZINCRBY` suma 2.
+- **Pops duplicados**: dos `RPOP` concurrentes en regiones distintas pueden devolver el mismo elemento. Una lista
+  garantiza at-least-once, no exactly-once; la doc recomienda hacer los pops desde una sola región. Es el
+  problema de invariantes: "cada elemento se procesa una vez" no es I-confluent.
+- **Strings con LWW por wall clock**: los mismos problemas de clock drift que en `2-cassandra-lww`. Es el único
+  tipo donde Redis usa el reloj del OS.
+- **Tombstones con causal stability**: un key borrado queda como tombstone hasta que todas las réplicas
+  observaron el delete (lo calculan con vector clocks). Una región caída hace crecer los tombstones en las demás.
+- **No todo es un CRDT útil**: HyperLogLog usa delete-wins para no agrandar la estructura; los consumer groups
+  de streams no replican casi nada (cada región tiene sus consumers, y mover el tráfico a otra región puede releer
+  entries).
+
 ### Referencias
 
 CRDTs:
