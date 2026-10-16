@@ -56,15 +56,10 @@ reads que miran varios archivos. Lo usan Cassandra, RocksDB, LevelDB y HBase.
 
 **Nodo**: cada réplica guarda los datos en un LSM tree:
 
-```mermaid
-flowchart LR
-    write([write]) --> commitlog[("Commitlog<br/>disco, append-only")]
-    write --> memtable["Memtable<br/>memoria, ordenado por clave"]
-    memtable -- flush --> sstables[("SSTables<br/>disco, inmutables")]
-    sstables -- compaction --> sstables
-    read([read]) --> memtable
-    read --> sstables
-```
+![Write path y read path de Cassandra: el write va al commit log (disco) y al memtable (RAM); el memtable se baja con un flush a SSTables en disco, que la compaction junta en uno; el read busca en el memtable y en los SSTables.](https://www.scylladb.com/wp-content/uploads/cassandra-memtable-diagram.png)
+
+Diagrama: [ScyllaDB](https://www.scylladb.com/glossary/cassandra-memtable/). La flecha del commit log al memtable es
+el replay al reiniciar el proceso, no parte de cada write.
 
 - **Commitlog**: cada write se agrega al final de un archivo. Solo se usa para reconstruir el memtable si el
   proceso se reinicia.
