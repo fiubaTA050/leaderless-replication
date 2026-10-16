@@ -15,8 +15,9 @@ cd riak
 docker compose up -d --wait
 ```
 
-UI web: [Riak Explorer](http://localhost:8098/admin), incluida en la imagen. Muestra los bucket types con sus
-propiedades y las keys de cada bucket (DATA), y los nodos con sus métricas (OPS).
+UI web: http://localhost:8080 (`riak/ui/index.html`, servida por nginx). Para un bucket type muestra sus buckets,
+las keys de cada bucket y el objeto: el valor, o todos los siblings si hay un conflicto sin resolver, y el
+`X-Riak-Vclock`. Riak no tiene API para listar bucket types: se escribe el nombre (ej: `siblings`).
 
 Un solo nodo (la imagen es vieja, Riak 2.2.3, y en Apple Silicon corre emulada): alcanza para ver siblings, que
 dependen del causal context y no de la cantidad de nodos. Ese nodo igual guarda `n_val = 3` copias en vnodes
